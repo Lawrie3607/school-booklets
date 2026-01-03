@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>School Booklet Generator</title>
+    <!-- Fonts must be at the very top of the head -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500&family=STIX+Two+Text:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              mono: ['JetBrains Mono', 'monospace'],
+              serif: ['"STIX Two Text"', '"Latin Modern Roman"', 'serif'],
+            },
+            colors: {
+              primary: '#4f46e5',
+              secondary: '#10b981',
+            }
+          }
+        }
+      }
+    </script>
+    <script>
+      window.MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$', '$$'], ['\\[', '\\]']],
+          processEscapes: true,
+          packages: ['base', 'ams', 'noerrors', 'noundefined']
+        },
+        svg: {
+          fontCache: 'global'
+        },
+        startup: {
+          typeset: false
+        }
+      };
+    </script>
+    <script type="text/javascript" id="MathJax-script" async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js">
+    </script>
+    <script type="importmap">
+    {
+      "imports": {
+        "react/": "https://aistudiocdn.com/react@^19.2.1/",
+        "react": "https://aistudiocdn.com/react@^19.2.1",
+        "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+        "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0",
+        "marked": "https://cdn.jsdelivr.net/npm/marked@12.0.0/lib/marked.esm.js",
+        "pdfjs-dist": "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs"
+      }
+    }
+    </script>
+    <style>
+      .secure-content {
+        user-select: none !important;
+        -webkit-user-select: none !important;
+        -moz-user-select: none !important;
+        -ms-user-select: none !important;
+      }
+
+      .blurred-inactive {
+        filter: blur(20px);
+        pointer-events: none;
+        transition: filter 0.3s ease;
+      }
+
+      .prose ul {
+        list-style-type: none;
+        padding-left: 1.5rem;
+        text-indent: -1.5rem;
+      }
+      .prose li {
+        margin-bottom: 0.5em;
+      }
+      .prose p {
+        margin-bottom: 1.2em;
+      }
+      .prose strong {
+        font-weight: 700;
+        color: #111827;
+      }
+      mjx-container {
+        font-size: 110% !important;
+        outline: none !important;
+      }
+      
+      @media print {
+        .no-print, .print\:hidden { display: none !important; }
+        
+        body { 
+          background: white; 
+          font-size: 12pt;
+          color: black;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+
+        .break-after-page { page-break-after: always; break-after: page; }
+        .break-before-page { page-break-before: always; break-after: page; }
+        .break-inside-avoid { page-break-inside: avoid; break-inside: avoid; }
+        
+        main {
+          width: 100% !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          max-width: none !important;
+        }
+      }
+
+      /* Fix for potentially missing root height causing blank appearance */
+      #root {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* Improve heading contrast on darker backgrounds */
+      h1,h2,h3,h4 {
+        color: #0b1220 !important;
+        text-shadow: 0 1px 0 rgba(255,255,255,0.03), 0 2px 6px rgba(0,0,0,0.06);
+      }
+
+      /* Slightly darken muted text for readability */
+      .text-gray-400 { color: rgba(11,17,32,0.65) !important; }
+    </style>
+  <link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-gradient-to-b from-gray-300 via-gray-200 to-gray-300 text-gray-900 antialiased">
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
+<!-- Tesseract.js for client-side OCR (used for typed-text detection) -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>

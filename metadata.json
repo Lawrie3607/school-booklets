@@ -1,0 +1,7 @@
+{
+  "name": "School Booklets",
+  "description": "A smart tool for teachers to generate numbered booklets with AI-powered solutions from uploaded images or PDFs.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
