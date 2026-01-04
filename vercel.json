@@ -1,7 +1,8 @@
 {
-  "version": 2,
-  "buildCommand": "npm run build:web",
+  "framework": null,
+  "buildCommand": "npm install && npm run build:web",
   "outputDirectory": "dist",
+  "installCommand": "npm install",
   "routes": [
     { "src": "^/(.*)$", "dest": "/index.html" }
   ]
