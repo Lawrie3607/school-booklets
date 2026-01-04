@@ -14,6 +14,11 @@ dist-electron
 release
 *.local
 
+# Large data files (loaded at runtime from GitHub)
+services/defaultLibrary.ts
+data/
+booklet_library_backup_2025-12-31.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -24,3 +29,5 @@ release
 *.njsproj
 *.sln
 *.sw?
+
+.vercel

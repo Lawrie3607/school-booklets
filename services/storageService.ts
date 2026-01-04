@@ -1,6 +1,41 @@
 
 import { Booklet, CreateBookletDTO, Question, BookletType, User, UserRole, UserStatus, Assignment, Submission } from "../types";
-import DEFAULT_LIBRARY_JSON from "../data/booklet_library_backup.json";
+
+// Remote URLs for chunked library data (loaded at runtime to avoid deploy size limits)
+const LIBRARY_CHUNK_URLS = [
+  'https://raw.githubusercontent.com/Lawrie3607/booklet_library_backup_2025-12-31/refs/heads/main/1.json',
+  'https://raw.githubusercontent.com/Lawrie3607/booklet_library_backup_2025-12-31/refs/heads/main/2.json',
+  'https://raw.githubusercontent.com/Lawrie3607/booklet_library_backup_2025-12-31/refs/heads/main/3.json',
+  'https://raw.githubusercontent.com/Lawrie3607/booklet_library_backup_2025-12-31/refs/heads/main/4.json',
+  'https://raw.githubusercontent.com/Lawrie3607/booklet_library_backup_2025-12-31/refs/heads/main/5.json',
+  'https://raw.githubusercontent.com/Lawrie3607/booklet_library_backup_2025-12-31/refs/heads/main/6.json',
+  'https://raw.githubusercontent.com/Lawrie3607/booklet_library_backup_2025-12-31/refs/heads/main/7.json',
+  'https://raw.githubusercontent.com/Lawrie3607/booklet_library_backup_2025-12-31/refs/heads/main/8.json'
+];
+
+let libraryLoadPromise: Promise<Booklet[]> | null = null;
+
+async function fetchLibraryChunks(): Promise<Booklet[]> {
+  const texts = await Promise.all(LIBRARY_CHUNK_URLS.map(async u => {
+    const res = await fetch(u);
+    if (!res.ok) throw new Error(`Failed to fetch ${u}`);
+    return res.text();
+  }));
+  // Chunks are partial arrays; strip outer brackets and join
+  const stripped = texts.map(t => t.trim().replace(/^\s*\[/, '').replace(/\]\s*$/, '')).filter(Boolean);
+  const merged = '[' + stripped.join(',') + ']';
+  return JSON.parse(merged) as Booklet[];
+}
+
+export function getDefaultLibrary(): Promise<Booklet[]> {
+  if (!libraryLoadPromise) {
+    libraryLoadPromise = fetchLibraryChunks().catch(err => {
+      console.error('Failed to load default library:', err);
+      return [] as Booklet[];
+    });
+  }
+  return libraryLoadPromise;
+}
 
 const DB_NAME = 'school_booklet_db';
 const STORE_NAME = 'booklets';

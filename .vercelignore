@@ -1,0 +1,12 @@
+# Ignore large data file (loaded at runtime instead)
+data/
+booklet_library_backup_2025-12-31.json
+services/defaultLibrary.ts
+
+# Ignore Electron-specific
+electron/
+dist-electron/
+
+# Dev / build artifacts
+node_modules/
+.git/
