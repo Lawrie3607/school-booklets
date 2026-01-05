@@ -5,7 +5,13 @@ import BookletEditor from './pages/BookletEditor.tsx';
 import AssignmentPortal from './pages/AssignmentPortal.tsx';
 import SubmissionReview from './pages/SubmissionReview.tsx';
 import { initStorage, registerUser, loginUser, hasAnyUsers, checkAndSeedDatabase, factoryReset, resetPassword, syncBooklets, createBooklet } from './services/storageService';
+import * as storageService from './services/storageService';
 import { User, UserRole, UserStatus, CreateBookletDTO, BookletType } from './types';
+
+// Expose storageService globally for debugging
+if (typeof window !== 'undefined') {
+  (window as any).storageService = storageService;
+}
 
 const GRADELIST = ["Grade 8", "Grade 9", "Grade 10", "Grade 11", "Grade 12", "University"];
 
