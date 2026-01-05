@@ -909,7 +909,7 @@ export const pushAssignmentsToRemote = async () => {
     booklet_id: a.bookletId,
     booklet_title: a.bookletTitle,
     topic: a.topic,
-    topics: a.topics || [],
+    topics: (a as any).topics || [],
     grade: a.grade,
     start_num: a.startNum,
     end_num: a.endNum,
@@ -946,7 +946,6 @@ export const pullAssignmentsFromRemote = async () => {
       bookletId: r.booklet_id,
       bookletTitle: r.booklet_title,
       topic: r.topic,
-      topics: r.topics || [],
       grade: r.grade,
       startNum: r.start_num,
       endNum: r.end_num,
@@ -1033,7 +1032,7 @@ export const pushSubmissionsToRemote = async () => {
   const local = await getSubmissions();
   if (!local || local.length === 0) return { pushed: 0 };
   
-  const payload = local.map(s => ({
+    const payload = local.map(s => ({
     id: s.id,
     assignment_id: s.assignmentId,
     student_id: s.studentId,
@@ -1042,7 +1041,7 @@ export const pushSubmissionsToRemote = async () => {
     total_score: s.totalScore,
     max_score: s.maxScore,
     status: s.status,
-    started_at: s.startedAt,
+    started_at: (s as any).startedAt,
     submitted_at: s.submittedAt
   }));
 
@@ -1075,7 +1074,7 @@ export const pullSubmissionsFromRemote = async () => {
       totalScore: r.total_score,
       maxScore: r.max_score,
       status: r.status,
-      startedAt: r.started_at,
+      startedAt: (r as any).started_at,
       submittedAt: r.submitted_at
     };
     await performTransaction(SUBMISSION_STORE, 'readwrite', tx => {
@@ -1267,7 +1266,7 @@ const syncSubmissionToRemote = async (sub: Submission) => {
     total_score: sub.totalScore,
     max_score: sub.maxScore,
     status: sub.status,
-    started_at: sub.startedAt,
+    started_at: (sub as any).startedAt,
     submitted_at: sub.submittedAt
   };
   const { error } = await supabase.from('submissions').upsert(payload, { onConflict: 'id' });

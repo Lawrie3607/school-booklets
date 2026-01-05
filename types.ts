@@ -81,6 +81,7 @@ export interface Assignment {
   bookletId: string;
   bookletTitle: string;
   topic: string;
+  topics?: string[];
   startNum: number;
   endNum: number;
   dueDate?: string;
@@ -111,6 +112,7 @@ export interface Submission {
   maxScore?: number;
   status: 'SUBMITTED' | 'MARKED' | 'RECORDED';
   submittedAt: number;
+  startedAt?: number;
 }
 
 export interface CreateBookletDTO {
