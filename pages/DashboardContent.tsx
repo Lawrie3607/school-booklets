@@ -35,11 +35,14 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
     const [view, setView] = useState<'library' | 'assignments'>('library');
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showCreateAssignment, setShowCreateAssignment] = useState(false);
+    const [showEditModal, setShowEditModal] = useState(false);
+    const [editingBooklet, setEditingBooklet] = useState<Booklet | null>(null);
     const [showUserManagement, setShowUserManagement] = useState(false);
     const [showPastePortal, setShowPastePortal] = useState(false);
     const [pasteData, setPasteData] = useState('');
     // preview mode is lifted to App and passed in via props
     const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+    const [librarySourceInfo, setLibrarySourceInfo] = useState<{source?: string, count?: number}>({});
     const [isImporting, setIsImporting] = useState(false);
     const [newBooklet, setNewBooklet] = useState<CreateBookletDTO>({ 
       subject: Subject.MATHEMATICS as unknown as string, 
@@ -73,15 +76,65 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
       const matchGrade = normalize(b.grade) === normalize(currentUser.grade);
       // Allow authorized students to see their grade booklets without an extra "publish" step.
       const studentCanSee = (b.isPublished || currentUser.status === UserStatus.AUTHORIZED);
-      // Students should only see reading-only (questions-only) materials.
-      return matchGrade && studentCanSee && b.type === BookletType.READING_ONLY;
+      // Show all booklet types (removed READING_ONLY filter)
+      return matchGrade && studentCanSee;
+    });
+    // Sort booklets by grade descending (per GRADELIST order) and then title
+    const gradeOrder: Record<string, number> = GRADELIST.reduce((m, g, i) => { m[g] = i; return m; }, {} as Record<string, number>);
+    // Deduplicate by ID and by composite key (grade|subject|title) to prevent duplicate cards
+    const seenIds = new Set<string>();
+    const seenComposite = new Set<string>();
+    const dedupedBooklets = visibleBooklets.filter(b => {
+      const composite = `${(b.grade||'').toString().trim().toLowerCase()}|${(b.subject||'').toString().trim().toLowerCase()}|${(b.title||'').toString().trim().toLowerCase()}`;
+      if (seenIds.has(b.id)) return false;
+      if (seenComposite.has(composite)) return false;
+      seenIds.add(b.id);
+      seenComposite.add(composite);
+      return true;
+    });
+    const sortedVisibleBooklets = dedupedBooklets.slice().sort((a, b) => {
+      const oa = gradeOrder[a.grade] ?? -1;
+      const ob = gradeOrder[b.grade] ?? -1;
+      if (oa !== ob) return ob - oa; // descending by grade order
+      return (a.title || '').toString().localeCompare((b.title || '').toString());
     });
     const totalForGrade = booklets.filter(b => normalize(b.grade) === normalize(currentUser.grade)).length;
 
     const refreshData = async () => {
         try {
-            const b = await storageService.getBooklets();
+            let b = await storageService.getBooklets();
+            
+            // One-time fix for Grade 12 Physical Science booklets
+            let changed = false;
+            for (const booklet of b) {
+              if (booklet.grade === 'Grade 12' && booklet.subject === 'Physical Science') {
+                if (booklet.type === BookletType.WITH_SOLUTIONS) {
+                  booklet.subject = 'Physics';
+                  changed = true;
+                } else if (booklet.type === BookletType.READING_ONLY) {
+                  booklet.subject = 'Chemistry';
+                  changed = true;
+                }
+                if (changed) {
+                  await storageService.updateBooklet(booklet);
+                }
+              }
+            }
+            if (changed) {
+              b = await storageService.getBooklets();
+            }
+
             setBooklets(b || []);
+                try {
+                  const src = localStorage.getItem('pcl_library_last_source') || undefined;
+                  const cnt = Number(localStorage.getItem('pcl_library_last_count') || '') || undefined;
+                  setLibrarySourceInfo({ source: src, count: cnt });
+                } catch(_) {}
+            // Debug: log counts of Grade 12 Chemistry booklets
+            try {
+              const chem = (b || []).filter(bt => normalize(bt.grade) === normalize('Grade 12') && ((bt.subject||'').toString().toLowerCase().includes('chemistry')));
+              console.log('DEBUG: Grade 12 Chemistry count (DashboardContent):', chem.length, chem.map(c => ({ id: c.id, title: c.title, type: c.type, isPublished: c.isPublished })));
+            } catch (e) { /* ignore debug errors */ }
             const a = await storageService.getAssignments(isStudent ? currentUser.grade : undefined);
             setAssignments(a || []);
             if (isSuperAdmin) {
@@ -125,15 +178,25 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
                 finalContent = await extractLibraryFromJsonOrCode(content, fileName);
             }
             const result = await storageService.importData(finalContent);
+            console.log('Import result:', result);
             if (result.success) {
+                // Clear library cache to force reload from IndexedDB
+                localStorage.removeItem('pcl_library_cache_version');
+                console.log('Import successful, cache cleared. Count:', result.count);
                 setToast({ message: `Success! ${result.count} items imported.`, type: 'success' });
-                setTimeout(() => window.location.reload(), 1200);
+                setTimeout(async () => {
+                    const reloaded = await storageService.getBooklets();
+                    console.log('After import, booklets in DB:', reloaded.length);
+                    window.location.reload();
+                }, 1200);
             }
             else {
+                console.error('Import failed:', result.message);
                 setToast({ message: `Import Failed: ${result.message}`, type: 'error' });
             }
         }
         catch (err: any) {
+            console.error('Import error:', err);
             setToast({ message: `System Error: ${err.message}`, type: 'error' });
         }
         finally {
@@ -176,6 +239,14 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
 
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 animate-in fade-in duration-500">
+        {librarySourceInfo.source && (
+          <div className="mb-4 text-xs text-gray-700">
+            Library source: <strong className="uppercase">{librarySourceInfo.source}</strong>
+            {typeof librarySourceInfo.count === 'number' && (
+              <> — <strong>{librarySourceInfo.count}</strong> booklets</>
+            )}
+          </div>
+        )}
         {toast && (
           <div className={`fixed top-12 left-1/2 -translate-x-1/2 z-[200] px-10 py-5 rounded-full font-black text-[10px] uppercase tracking-widest shadow-2xl animate-bounce ${toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-gray-900 text-white'}`}>
             {toast.message}
@@ -239,9 +310,39 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
           
           {isStaff && (
             <div className="flex items-center gap-6">
-              <button onClick={() => setIsPreviewMode(!isPreviewMode)} className={`px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-widest border-2 transition-all ${isPreviewMode ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-200 text-gray-400'}`}>
-                {isPreviewMode ? 'Close Portal Preview' : 'Preview Student View'}
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await storageService.syncBooklets();
+                    const pushed = (res && (res.pushed || 0)) as number;
+                    alert(`Sync complete. Pushed ${pushed} booklets.`);
+                  } catch (err) {
+                    console.error('Sync failed', err);
+                    alert('Sync failed. See console for details.');
+                  }
+                }}
+                title="Sync with remote"
+                className="px-6 py-3 bg-emerald-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-xl"
+              >
+                Sync Now
               </button>
+              {isSuperAdmin ? (
+                <button 
+                  onClick={async () => { 
+                    if(confirm("CRITICAL ACTION: Are you sure you want to EMPTY the entire library? This will delete all booklets from your local storage.")) { 
+                      await storageService.clearLibrary(); 
+                      window.location.reload(); 
+                    } 
+                  }} 
+                  className="px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-widest border-2 border-red-200 text-red-500 hover:bg-red-600 hover:text-white hover:border-red-600 transition-all shadow-sm"
+                >
+                  Clear Library
+                </button>
+              ) : (
+                <button onClick={() => setIsPreviewMode(!isPreviewMode)} className={`px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-widest border-2 transition-all ${isPreviewMode ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-200 text-gray-400'}`}>
+                  {isPreviewMode ? 'Close Portal Preview' : 'Preview Student View'}
+                </button>
+              )}
               {!isPreviewMode && (
                 <div className="flex items-center gap-4">
                   <div className="flex bg-white border border-gray-100 rounded-[2.5rem] p-2 shadow-xl items-center">
@@ -302,13 +403,33 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
         </div>
 
         {view === 'library' ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-16">
-            {visibleBooklets.map(b => (
-              <BookletCover key={b.id} booklet={b} isStaff={isStaff} onClick={() => onSelectBooklet(b.id)} onUpdate={async (id, subject) => { try { await storageService.updateBookletSubject(id, subject); setToast({message: `Marked ${subject}.`, type: 'success'}); refreshData(); setTimeout(()=>setToast(null),2000); } catch(err:any){ setToast({message: err.message||'Update failed', type:'error'}); } }} />
-            ))}
+          <div className="space-y-12">
+            {GRADELIST.slice().reverse().map(grade => {
+              const items = sortedVisibleBooklets.filter(b => normalize(b.grade) === normalize(grade));
+              if (!items || items.length === 0) return null;
+              return (
+                <div key={grade} className="w-full">
+                  <div className="mb-6 flex items-center justify-between">
+                    <h3 className="text-2xl font-black uppercase tracking-tight">{grade}</h3>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-16">
+                    {items.map(b => (
+                      <BookletCover
+                        key={b.id}
+                        booklet={b}
+                        isStaff={isStaff}
+                        onClick={() => onSelectBooklet(b.id)}
+                        onEdit={(booklet) => { setEditingBooklet(booklet); setShowEditModal(true); }}
+                        onUpdate={async (id, subject) => { try { await storageService.updateBookletSubject(id, subject); setToast({message: `Marked ${subject}.`, type: 'success'}); refreshData(); setTimeout(()=>setToast(null),2000); } catch(err:any){ setToast({message: err.message||'Update failed', type:'error'}); } }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
 
-            {visibleBooklets.length === 0 && !isImporting && (
-              <div className="col-span-full py-40 text-center border-4 border-dashed border-gray-100 rounded-[4rem] bg-gray-50/50">
+            {sortedVisibleBooklets.length === 0 && !isImporting && (
+              <div className="py-40 text-center border-4 border-dashed border-gray-100 rounded-[4rem] bg-gray-50/50">
                 <p className="text-3xl font-black text-gray-700 uppercase italic">No booklets available</p>
                 {isStudent ? (
                   <div className="mt-6 text-sm text-gray-500">
@@ -335,7 +456,7 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
             )}
 
             {isImporting && (
-              <div className="col-span-full py-40 text-center">
+              <div className="py-40 text-center">
                 <div className="w-24 h-24 border-8 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-10"></div>
                 <p className="text-3xl font-black uppercase italic animate-pulse text-indigo-600 tracking-tighter">Syncing Database...</p>
               </div>
@@ -443,7 +564,7 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
                     setAssignmentForm({...assignmentForm, bookletId: val, topics: []});
                   }}>
                     <option value="">-- choose booklet --</option>
-                    {booklets.map(b => <option key={b.id} value={b.id}>{`${b.grade}; ${b.subject}`}</option>)}
+                    {booklets.map(b => <option key={b.id} value={b.id}>{`${b.grade}; ${b.subject} - ${b.title}`}</option>)}
                   </select>
                 </div>
 
@@ -538,6 +659,53 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
                   }} className="px-6 py-3 bg-indigo-600 text-white rounded">Create</button>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {showEditModal && editingBooklet && (
+          <div className="fixed inset-0 z-[180] flex items-center justify-center bg-black/90 backdrop-blur-xl p-6">
+            <div className="bg-white rounded-[4rem] shadow-2xl w-full max-w-xl overflow-hidden">
+              <div className="p-12 border-b flex justify-between items-center">
+                <h2 className="text-4xl font-black uppercase italic">Edit Asset</h2>
+                <button onClick={() => setShowEditModal(false)} className="p-5 bg-gray-100 rounded-full hover:bg-red-50 hover:text-red-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                if (editingBooklet) {
+                  await storageService.updateBooklet(editingBooklet);
+                  setShowEditModal(false);
+                  setToast({message: 'Asset updated.', type: 'success'});
+                  refreshData();
+                  setTimeout(() => setToast(null), 3000);
+                }
+              }} className="p-12 space-y-10">
+                <div className="space-y-8">
+                  <div>
+                    <label className="block text-[11px] font-black text-gray-400 uppercase tracking-widest mb-4 ml-4">Title</label>
+                    <input required type="text" className="w-full bg-gray-50 border-4 border-gray-50 rounded-3xl p-6 font-black italic outline-none focus:border-indigo-600 text-xl" value={editingBooklet.title} onChange={e => setEditingBooklet({ ...editingBooklet, title: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-black text-gray-400 uppercase tracking-widest mb-4 ml-4">Type</label>
+                    <select className="w-full bg-gray-50 border-4 border-gray-50 rounded-3xl p-6 font-black italic outline-none focus:border-indigo-600 text-xl" value={editingBooklet.type} onChange={e => setEditingBooklet({ ...editingBooklet, type: e.target.value as BookletType })}>
+                      <option value={BookletType.READING_ONLY}>{BookletType.READING_ONLY}</option>
+                      <option value={BookletType.WITH_SOLUTIONS}>{BookletType.WITH_SOLUTIONS}</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-black text-gray-400 uppercase tracking-widest mb-4 ml-4">Subject</label>
+                    <select className="w-full bg-gray-50 border-4 border-gray-50 rounded-3xl p-6 font-black italic outline-none focus:border-indigo-600 text-xl" value={editingBooklet.subject} onChange={e => setEditingBooklet({ ...editingBooklet, subject: e.target.value })}>
+                      {Object.values(Subject).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <button type="submit" className="w-full bg-gray-900 text-white font-black py-8 rounded-[2rem] text-[12px] uppercase tracking-[0.3em] shadow-2xl hover:bg-black transition-all">Save Changes</button>
+              </form>
             </div>
           </div>
         )}

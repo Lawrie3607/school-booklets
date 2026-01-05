@@ -4,8 +4,8 @@ import Dashboard from './pages/DashboardContent.tsx';
 import BookletEditor from './pages/BookletEditor.tsx';
 import AssignmentPortal from './pages/AssignmentPortal.tsx';
 import SubmissionReview from './pages/SubmissionReview.tsx';
-import { initStorage, registerUser, loginUser, hasAnyUsers, checkAndSeedDatabase, factoryReset, resetPassword } from './services/storageService';
-import { User, UserRole, UserStatus } from './types';
+import { initStorage, registerUser, loginUser, hasAnyUsers, checkAndSeedDatabase, factoryReset, resetPassword, syncBooklets, createBooklet } from './services/storageService';
+import { User, UserRole, UserStatus, CreateBookletDTO, BookletType } from './types';
 
 const GRADELIST = ["Grade 8", "Grade 9", "Grade 10", "Grade 11", "Grade 12", "University"];
 
@@ -26,6 +26,7 @@ const App: React.FC = () => {
   const [isFirstRun, setIsFirstRun] = useState<boolean | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [loadStatus, setLoadStatus] = useState("Initializing Core...");
+  const GEMINI_KEY = (process.env.GEMINI_API_KEY || process.env.API_KEY) as string | undefined;
   const [showReset, setShowReset] = useState(false);
   const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [showResetPassword, setShowResetPassword] = useState(false);
@@ -36,8 +37,6 @@ const App: React.FC = () => {
       try {
         setLoadStatus("Opening Local Databases...");
         await initStorage();
-        setLoadStatus("Checking Default Library...");
-        await checkAndSeedDatabase();
         setLoadStatus("Verifying Identity Tokens...");
         const saved = localStorage.getItem('pcl_user');
         if (saved) {
@@ -52,6 +51,21 @@ const App: React.FC = () => {
         setIsFirstRun(!exists);
         if (!exists) setAuthTab('register');
         setLoadStatus("Sync Complete.");
+        
+        // Seed library in background (don't block login)
+        checkAndSeedDatabase().catch(e => console.warn('Background seed error:', e));
+
+        // Expose debug helper to create a sample booklet from the renderer console
+        try {
+          (window as any).DEBUG_createSampleBooklet = async () => {
+            const dto: CreateBookletDTO = { subject: 'Physics' as any, grade: 'Grade 11', topic: 'DEBUG Topic', type: BookletType.WITH_SOLUTIONS };
+            const b = await createBooklet(dto, 'DEV');
+            console.log('DEBUG_createSampleBooklet:', b);
+            return b;
+          };
+        } catch (e) {
+          // ignore in environments where window isn't available
+        }
       } catch (err) {
         console.error("Critical System Init Error:", err);
         setLoadStatus("Initialization Error.");
@@ -98,6 +112,8 @@ const App: React.FC = () => {
       if (authForm.rememberMe) {
         localStorage.setItem('pcl_user', JSON.stringify(user));
       }
+        // Background sync after login/register
+        syncBooklets().catch(e => console.warn('Background sync failed', e));
       setIsFirstRun(false); 
     } catch (err: any) { 
       setAuthError(err.message || "Authentication rejected."); 
@@ -212,6 +228,9 @@ const App: React.FC = () => {
     );
   }
 
+  // Show a clear banner if Gemini API key is missing so users understand AI won't work
+  const missingAIKey = !GEMINI_KEY || GEMINI_KEY.trim().length === 0;
+
   if (currentUser.status === UserStatus.PENDING) {
     return <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center"><h2 className="text-5xl font-black uppercase tracking-tighter italic">Verifying Identity</h2><p className="mt-4">Account pending approval.</p><button onClick={handleLogout} className="mt-8 text-xs font-black uppercase tracking-widest text-gray-400">Sign Out</button></div>;
   }
@@ -227,6 +246,9 @@ const App: React.FC = () => {
 
   return (
     <>
+      {missingAIKey && (
+        <div className="fixed inset-x-0 top-0 z-50 bg-red-600 text-white text-center py-2 font-black text-sm">AI Disabled — GEMINI_API_KEY is not set. Set the env var to enable AI features.</div>
+      )}
       {currentUser && (currentUser.role === UserRole.STAFF || currentUser.role === UserRole.SUPER_ADMIN) && (
         <div style={{ position: 'fixed', right: 18, top: 18, zIndex: 9999 }}>
           <button onClick={() => setIsPreviewMode(v => !v)} className="px-4 py-2 bg-indigo-600 text-white rounded-xl shadow-lg font-black text-xs uppercase">

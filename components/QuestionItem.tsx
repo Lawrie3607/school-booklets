@@ -12,6 +12,7 @@ interface QuestionItemProps {
   onUpdate: (id: string, updates: Partial<Question>) => void;
   onScrollTo?: (id: string) => void;
   onRegenerate?: () => void;
+  onAIFormat?: (id: string, field: 'extractedQuestion' | 'generatedSolution') => void;
    isStaff?: boolean;
 }
 
@@ -21,7 +22,8 @@ const QuestionItem: React.FC<QuestionItemProps> = ({
   variant, 
   onDelete, 
   onUpdate,
-  onRegenerate
+  onRegenerate,
+  onAIFormat
    , isStaff = false
 }) => {
   const [isEditingSolution, setIsEditingSolution] = useState(false);
@@ -67,14 +69,25 @@ const QuestionItem: React.FC<QuestionItemProps> = ({
                 <img key={idx} src={url} alt="Resource" className="w-full h-auto object-contain" />
              ))}
           </div>
-          <div className="bg-gray-50/80 p-10 rounded-3xl border border-gray-100 shadow-inner">
+          <div className="bg-gray-50/80 p-10 rounded-3xl border border-gray-100 shadow-inner relative group/text">
              {question.isProcessing ? (
                  <div className="flex items-center gap-4 animate-pulse">
                      <div className="w-4 h-4 bg-indigo-500 rounded-full animate-bounce"></div>
                      <span className="text-xs font-black uppercase tracking-widest text-indigo-500">AI Analysing Text & Solving...</span>
                  </div>
              ) : (
-                <MarkdownDisplay content={question.extractedQuestion} className="text-sm leading-relaxed" />
+                <>
+                  <MarkdownDisplay content={question.extractedQuestion} className="text-sm leading-relaxed" />
+                  {isStaff && onAIFormat && (
+                    <button 
+                      onClick={() => onAIFormat(question.id, 'extractedQuestion')}
+                      className="absolute top-4 right-4 p-2 bg-white border rounded-lg opacity-0 group-hover/text:opacity-100 transition-opacity shadow-sm hover:bg-indigo-50 text-indigo-600"
+                      title="AI Format Question"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+                    </button>
+                  )}
+                </>
              )}
           </div>
         </div>
@@ -95,6 +108,11 @@ const QuestionItem: React.FC<QuestionItemProps> = ({
                         {onRegenerate && (
                              <button onClick={onRegenerate} title="Regenerate with AI" className="p-4 bg-gray-50 text-indigo-600 rounded-2xl hover:bg-indigo-100 hover:text-indigo-700 transition-all shadow-sm">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                             </button>
+                        )}
+                        {onAIFormat && (
+                             <button onClick={() => onAIFormat(question.id, 'generatedSolution')} title="AI Format Solution" className="p-4 bg-gray-50 text-emerald-600 rounded-2xl hover:bg-emerald-100 hover:text-emerald-700 transition-all shadow-sm">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
                              </button>
                         )}
                         <button onClick={() => setIsEditingSolution(true)} className="p-4 bg-gray-50 text-indigo-600 rounded-2xl hover:bg-indigo-600 hover:text-white transition-all shadow-sm"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>

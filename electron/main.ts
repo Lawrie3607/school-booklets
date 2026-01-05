@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { createRequire } from 'module';
@@ -29,6 +29,31 @@ try {
 }
 
 const createWindow = () => {
+  // Determine the best icon to use at runtime (dev vs packaged locations)
+  const resolveIconPath = (): string | undefined => {
+    const candidates = [
+      // dev server / source
+      path.join(__dirname, '../public/app-icon.png'),
+      // project data folder (user-provided)
+      path.join(__dirname, '../data/Gartoon.png'),
+      // when packaged, app files may live under resources/app or resources/app.asar
+      path.join(process.resourcesPath, 'app', 'data', 'Gartoon.png'),
+      // converted ico placed by electron-builder during packaging
+      path.join(process.resourcesPath, '.icon-ico', 'icon.ico'),
+      path.join(process.resourcesPath, 'icon.ico'),
+    ];
+
+    for (const p of candidates) {
+      try {
+        if (fs.existsSync(p)) return p;
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    return undefined;
+  };
+  const iconPath = resolveIconPath();
   // Create the browser window
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -50,7 +75,7 @@ const createWindow = () => {
       contextIsolation: true,
       nodeIntegration: false,
     },
-    icon: path.join(__dirname, '../public/app-icon.png'),
+    icon: iconPath ?? undefined,
   });
 
   // In development, load from Vite dev server
@@ -84,6 +109,43 @@ const createWindow = () => {
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
   createWindow();
+
+  // IPC handlers for data file operations
+  ipcMain.handle('list-data-files', () => {
+    try {
+      // In dev mode __dirname is dist-electron, data is at project root
+      const dataDir = path.join(__dirname, '..', 'data');
+      console.log('list-data-files: checking', dataDir);
+      if (!fs.existsSync(dataDir)) {
+        console.log('list-data-files: data dir not found');
+        return [];
+      }
+      const files = fs.readdirSync(dataDir).filter(f => f.toLowerCase().endsWith('.json'));
+      console.log('list-data-files: found', files);
+      return files;
+    } catch (e) {
+      console.error('list-data-files error:', e);
+      return [];
+    }
+  });
+
+  ipcMain.handle('read-data-file', (event, name: string) => {
+    try {
+      const dataDir = path.join(__dirname, '..', 'data');
+      const filePath = path.join(dataDir, name);
+      console.log('read-data-file:', filePath);
+      if (!fs.existsSync(filePath)) {
+        console.log('read-data-file: file not found');
+        return null;
+      }
+      const content = fs.readFileSync(filePath, 'utf8');
+      console.log('read-data-file: read', content.length, 'chars from', name);
+      return content;
+    } catch (e) {
+      console.error('read-data-file error:', e);
+      return null;
+    }
+  });
 
   app.on('activate', () => {
     // On macOS, re-create window when dock icon is clicked and no windows open

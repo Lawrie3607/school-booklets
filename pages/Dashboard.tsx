@@ -160,13 +160,13 @@ const Dashboard: React.FC<{
            <div>
               <div className="flex items-center gap-5">
                 <h1 className="text-6xl font-black text-gray-900 tracking-tighter uppercase leading-none italic">{isStaff ? 'Master' : 'Student'}</h1>
-                {isSuperAdmin && (
-                   <div className="flex items-center gap-3">
-                     <button id="btn-user-mgmt" name="btnUserMgmt" onClick={() => setShowUserManagement(true)} title="Users" className="p-4 bg-indigo-600 text-white rounded-2xl hover:bg-black transition-all shadow-xl"><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
-                     <a id="btn-supabase" href="https://supabase.com/dashboard/project/zqpdbmqneebjsytgkodl/editor/17484?schema=public" target="_blank" rel="noreferrer" title="Open Supabase Dashboard" className="p-4 bg-yellow-500 text-white rounded-2xl hover:bg-yellow-600 transition-all shadow-xl flex items-center gap-2">Supabase<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 5l7 7-7-7z"/><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg></a>
-                   </div>
-                )}
               </div>
+              {isSuperAdmin && (
+                <div className="flex items-center gap-3 mt-4">
+                  <button id="btn-user-mgmt" name="btnUserMgmt" onClick={() => setShowUserManagement(true)} title="Users" className="p-4 bg-indigo-600 text-white rounded-2xl hover:bg-black transition-all shadow-xl"><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
+                  <a id="btn-supabase" href="https://supabase.com/dashboard/project/zqpdbmqneebjsytgkodl/editor/17484?schema=public" target="_blank" rel="noreferrer" title="Open Supabase Users Table" className="px-6 py-4 bg-yellow-500 text-white rounded-2xl hover:bg-yellow-600 transition-all shadow-xl flex items-center gap-2 font-bold text-sm uppercase tracking-wide">📊 Supabase<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+                </div>
+              )}
               <p className="text-gray-400 font-black uppercase tracking-[0.5em] text-[9px] mt-2 italic opacity-60">Princeton Centre of Learning</p>
            </div>
         </div>
@@ -178,19 +178,24 @@ const Dashboard: React.FC<{
               id="btn-sync"
               name="btnSync"
               onClick={async () => {
+                setToast({ message: 'Syncing all data...', type: 'success' });
                 try {
-                  const res = await storageService.syncBooklets();
-                  const pushed = (res && (res.pushed || 0)) as number;
-                  alert(`Sync complete. Pushed ${pushed} booklets.`);
+                  const res = await storageService.syncAllData();
+                  const msg = res.success 
+                    ? `Synced! Pulled: ${(res.pullBooklets?.pulled||0)} booklets, ${(res.pullUsers?.pulled||0)} users` 
+                    : 'Sync failed';
+                  setToast({ message: msg, type: res.success ? 'success' : 'error' });
+                  if (res.success) refreshData();
                 } catch (err) {
                   console.error('Sync failed', err);
-                  alert('Sync failed. See console for details.');
+                  setToast({ message: 'Sync failed. Check console.', type: 'error' });
                 }
+                setTimeout(() => setToast(null), 4000);
               }}
-              title="Sync with remote"
-              className="p-4 bg-emerald-600 text-white rounded-2xl hover:bg-emerald-700 transition-all shadow-xl"
+              title="Sync booklets, users, assignments, and submissions with Supabase"
+              className="px-6 py-4 bg-emerald-600 text-white rounded-2xl hover:bg-emerald-700 transition-all shadow-xl font-bold text-sm uppercase tracking-wide"
             >
-              Sync Now
+              🔄 Sync All
             </button>
 
              {isSuperAdmin ? (

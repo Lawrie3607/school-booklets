@@ -6,6 +6,7 @@ services/defaultLibrary.ts
 # Ignore Electron-specific
 electron/
 dist-electron/
+release/
 
 # Dev / build artifacts
 node_modules/

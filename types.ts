@@ -7,7 +7,7 @@ export enum Subject {
   GEOGRAPHY = 'Geography',
   HISTORY = 'History',
   ENGLISH = 'English',
-  
+  PHYSICAL_SCIENCE = 'Physical Science',
 }
 
 export enum BookletType {

@@ -72,6 +72,13 @@ export const SUBJECT_DECORATIONS: Record<Subject, string> = {
       <text x="70%" y="40%" font-size="18" fill="currentColor">NaCl</text>
       <circle cx="50%" cy="60%" r="30" fill="none" stroke="currentColor" stroke-width="1"/>
     </svg>
+  `,
+  [Subject.PHYSICAL_SCIENCE]: `
+    <svg width="100%" height="100%" opacity="0.1" xmlns="http://www.w3.org/2000/svg">
+      <path d="M100 100 L900 100" stroke="currentColor" stroke-width="2"/>
+      <circle cx="50%" cy="50%" r="40" fill="currentColor"/>
+      <text x="10%" y="80%" font-size="24" fill="currentColor">PhySci</text>
+    </svg>
   `
 };
 
@@ -82,7 +89,8 @@ export const SUBJECT_PATTERNS: Record<Subject, string> = {
   [Subject.GEOGRAPHY]: "repeating-linear-gradient(0deg, transparent, transparent 19px, rgba(0,0,0,0.03) 20px), repeating-linear-gradient(90deg, transparent, transparent 19px, rgba(0,0,0,0.03) 20px)",
   [Subject.HISTORY]: "linear-gradient(30deg, rgba(0,0,0,0.02) 12%, transparent 12.5%, transparent 87%, rgba(0,0,0,0.02) 87.5%, rgba(0,0,0,0.02))",
   [Subject.ENGLISH]: "linear-gradient(to right, rgba(0,0,0,0.02) 1px, transparent 1px)",
-  [Subject.CHEMISTRY]: "linear-gradient(120deg, rgba(0,0,0,0.02) 1px, transparent 1px)"
+  [Subject.CHEMISTRY]: "linear-gradient(120deg, rgba(0,0,0,0.02) 1px, transparent 1px)",
+  [Subject.PHYSICAL_SCIENCE]: "repeating-linear-gradient(45deg, rgba(0,0,0,0.01) 0px, rgba(0,0,0,0.01) 1px, transparent 1px, transparent 10px)"
 };
 
 export const MOCK_USER = "Lawrence Masiyiwa";

@@ -18,4 +18,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on(channel, (event, ...args) => func(...args));
     }
   },
+  // Read local JSON files from the app's `data` folder via IPC. Returns an array of filenames.
+  listDataFiles: () => ipcRenderer.invoke('list-data-files'),
+  // Read a specific data file content (utf8) via IPC
+  readDataFile: (name: string) => ipcRenderer.invoke('read-data-file', name)
 });

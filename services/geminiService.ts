@@ -5,10 +5,112 @@ import { AIQuestionResponse, BookletType, Subject, Difficulty } from "../types";
 /**
  * Initializes Gemini with the standard environment API Key.
  */
-const getAIClient = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+const getAIClient = () => {
+  const key = process.env.API_KEY || process.env.GEMINI_API_KEY;
+  if (!key || key === 'PLACEHOLDER_API_KEY') {
+    // Don't throw here to avoid uncaught exceptions in renderer code paths.
+    // Return a stub client that surfaces a clear error when used.
+    return {
+      models: {
+        generateContent: async () => {
+          throw new Error(
+            "Gemini API Key is missing. Set GEMINI_API_KEY in your environment or .env.local file."
+          );
+        }
+      }
+    } as any;
+  }
+  return new GoogleGenAI({ apiKey: key });
+};
 
 const PRO_MODEL = "gemini-3-pro-preview";
 const FLASH_MODEL = "gemini-3-flash-preview";
+
+/**
+ * AI Agent to optimize and unify a booklet's content.
+ */
+export const optimizeBookletContent = async (
+  bookletTitle: string,
+  questions: any[]
+): Promise<any[]> => {
+  const ai = getAIClient();
+  const promptText = `
+    You are an expert educational content editor. 
+    Optimize the following questions for a booklet titled "${bookletTitle}".
+    
+    Tasks:
+    1. Unify the formatting: Use consistent LaTeX for all math ($...$).
+    2. Improve clarity: Rephrase questions to be clear and professional.
+    3. Standardize solutions: Ensure every solution is step-by-step and detailed.
+    4. Uniform Marks: Ensure mark allocations are consistent (e.g., "[5 marks]" at the end).
+    
+    Questions to optimize:
+    ${JSON.stringify(questions.map(q => ({ id: q.id, text: q.extractedQuestion, solution: q.generatedSolution, marks: q.maxMarks })))}
+    
+    Respond strictly in JSON format as an array of objects with the same IDs.
+  `;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: FLASH_MODEL,
+      contents: { parts: [{ text: promptText }] },
+      config: { 
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              extractedQuestion: { type: Type.STRING },
+              generatedSolution: { type: Type.STRING },
+              maxMarks: { type: Type.INTEGER }
+            },
+            required: ["id", "extractedQuestion", "generatedSolution", "maxMarks"]
+          }
+        }
+      }
+    });
+    
+    return JSON.parse(response.text || "[]");
+  } catch (error) {
+    console.error("Optimization Error:", error);
+    return questions;
+  }
+};
+
+/**
+ * AI Agent to format a single piece of text (question or solution).
+ */
+export const formatTextWithAI = async (
+  text: string,
+  context: 'question' | 'solution'
+): Promise<string> => {
+  const ai = getAIClient();
+  const promptText = `
+    Format the following ${context} text to be professional and uniform.
+    - Use $...$ for all mathematical symbols and equations.
+    - Ensure clear structure and professional tone.
+    - If it's a solution, make it step-by-step.
+    
+    Text to format:
+    ${text}
+    
+    Respond with ONLY the formatted text.
+  `;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: FLASH_MODEL,
+      contents: { parts: [{ text: promptText }] }
+    });
+    
+    return response.text || text;
+  } catch (error) {
+    console.error("Formatting Error:", error);
+    return text;
+  }
+};
 
 export const processImageWithGemini = async (
   base64Images: string[],
@@ -28,6 +130,11 @@ export const processImageWithGemini = async (
     2. Solve the problem completely. Use LaTeX for math ($...$).
     3. Determine the Mark Allocation (usually in brackets at the end).
     4. Categorize difficulty (Knowledge, Routine, Complex, Problem Solving).
+    
+    Uniformity Rules:
+    - Use $...$ for all mathematical symbols and equations.
+    - Ensure the question text is clear and professional.
+    - The solution must be step-by-step.
     
     Respond strictly in JSON format.
   `;

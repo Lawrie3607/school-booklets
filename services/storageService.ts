@@ -290,14 +290,10 @@ const renumberBooklet = (booklet: Booklet) => {
 export const initStorage = async () => {
   try {
     await openDB();
-    // Auto-sync with Supabase on startup (pull remote changes)
-    console.log('initStorage: Starting background sync with Supabase...');
-    // Pull/push then dedupe to remove accidental duplicates (runs in background)
-    syncAllData()
-      .then(() => dedupeLibrary().then(r => console.log('initStorage: dedupe result', r)).catch(e => console.warn('initStorage: dedupe failed', e)))
-      .catch(e => console.warn('Background sync failed:', e));
-    // Start a periodic background sync so desktop and web stay in sync while open
-    try { startPeriodicSync(60000); } catch (e) { /* non-fatal */ }
+    // Note: Auto-sync removed to improve load time - use manual sync button in Dashboard
+    console.log('initStorage: Database ready. Use Sync button to pull remote data.');
+    // Optionally start periodic sync (disabled by default for performance)
+    // try { startPeriodicSync(60000); } catch (e) { /* non-fatal */ }
   } catch (err) {
     console.warn('initStorage: IndexedDB unavailable, continuing in degraded mode. Default library will be used.', err);
   }

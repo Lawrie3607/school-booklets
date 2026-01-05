@@ -1,8 +1,8 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Booklet, Question, BookletType, UserRole } from '../types';
 import * as storageService from '../services/storageService';
-import { processImageWithGemini } from '../services/geminiService';
+import { processImageWithGemini, optimizeBookletContent, formatTextWithAI } from '../services/geminiService';
 import QuestionItem from '../components/QuestionItem';
 import { GRADE_THEMES } from '../constants';
 
@@ -22,52 +22,92 @@ const BookletEditor: React.FC<BookletEditorProps> = ({ bookletId, onBack, userRo
   
   const [currentTopic, setCurrentTopic] = useState<string>('');
   const [currentTerm, setCurrentTerm] = useState<string>('Term 1');
+  const [isDirty, setIsDirty] = useState(false);
+  const initialUpdatedAt = useRef<number | null>(null);
 
   const isStaff = userRole === UserRole.STAFF || userRole === UserRole.SUPER_ADMIN;
 
-  const loadBooklet = async () => {
+  const loadBooklet = async (isInitial = false) => {
      const data = await storageService.getBookletById(bookletId);
      if (data) {
         setBooklet(data);
-        if (!currentTopic) {
+        // Only auto-set topic on initial load if not already set
+        if (isInitial && !currentTopic) {
             const lastQ = data.questions[data.questions.length - 1];
             setCurrentTopic(lastQ?.topic || data.topic);
             setCurrentTerm(lastQ?.term || 'Term 1');
+          initialUpdatedAt.current = data.updatedAt || null;
+          setIsDirty(false);
         }
      }
   };
 
+  // Warn on window/tab close if there are unsaved changes
   useEffect(() => {
-    loadBooklet();
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!isDirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
+  useEffect(() => {
+    loadBooklet(true);
   }, [bookletId]);
 
-  const sortedQuestions = useMemo(() => {
-    if (!booklet) return [];
-    return [...booklet.questions].sort((a, b) => a.number - b.number);
+  const groupedQuestions = useMemo(() => {
+    if (!booklet) return {};
+    const groups: Record<string, Question[]> = {};
+
+    // Determine topic order by first appearance in the booklet.questions array
+    const topicsOrder: string[] = [];
+    for (const q of booklet.questions) {
+      const t = q.topic || booklet.topic || 'General';
+      if (!topicsOrder.includes(t)) topicsOrder.push(t);
+    }
+
+    // For each topic in appearance order, collect its questions and sort by `number`
+    for (const t of topicsOrder) {
+      const list = booklet.questions.filter(q => (q.topic || booklet.topic || 'General') === t)
+        .slice()
+        .sort((a, b) => (a.number || 0) - (b.number || 0));
+      groups[t] = list;
+    }
+
+    return groups;
   }, [booklet]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || !booklet) return;
     const files = Array.from(e.target.files) as File[];
-    setIsProcessing(true);
-    const activeTopic = currentTopic || booklet.topic;
+    const activeTopic = (currentTopic || booklet.topic || '').trim();
+    
+    if (!activeTopic) {
+      alert("Please enter a Topic name in the input field before uploading units.");
+      return;
+    }
 
-    for (const file of files) {
-      setProcessStatus(`Uploading: ${file.name}`);
-      try {
+    setIsProcessing(true);
+    setProcessStatus(`Reading ${files.length} files...`);
+
+    try {
+      const newQuestions: Question[] = [];
+      for (const file of files) {
         const base64 = await new Promise<string>((res) => {
           const r = new FileReader();
           r.readAsDataURL(file);
           r.onload = () => res(r.result as string);
         });
         
-        // Step 1: Add as a placeholder with sequential number
         const now = Date.now();
-        const newQ: Question = {
+        newQuestions.push({
           id: crypto.randomUUID(), 
           topic: activeTopic, 
           term: currentTerm, 
-          number: booklet.questions.length + 1, 
+          number: 0, // assigned by storage
           maxMarks: 0,
           imageUrls: [base64], 
           extractedQuestion: "AI Analyzing...", 
@@ -75,34 +115,61 @@ const BookletEditor: React.FC<BookletEditorProps> = ({ bookletId, onBack, userRo
           isProcessing: true, 
           includeImage: true,
           createdAt: now
-        };
-        
-        // This triggers storage and automatic renumbering
-        await storageService.addQuestionToBooklet(bookletId, newQ);
-        await loadBooklet(); 
+        });
+      }
 
-        // Step 2: Solve with AI
-        setProcessStatus(`AI Solving Question ${newQ.number}...`);
-        const aiResp = await processImageWithGemini([base64], newQ.number, booklet.type);
-        
-        if (aiResp.error) {
-           setProcessStatus(`AI Error: ${aiResp.error}`);
-        }
+      setProcessStatus(`Saving ${newQuestions.length} placeholders...`);
+      await storageService.addQuestionsToBooklet(bookletId, newQuestions);
+      await loadBooklet(); 
+      setIsDirty(false);
 
-        await storageService.updateQuestionInBooklet(bookletId, newQ.id, {
+      // Step 2: Solve with AI sequentially
+      for (let i = 0; i < newQuestions.length; i++) {
+        const q = newQuestions[i];
+        setProcessStatus(`AI Solving Unit ${i + 1} of ${newQuestions.length}...`);
+        const aiResp = await processImageWithGemini(q.imageUrls, i + 1, booklet.type);
+        
+        await storageService.updateQuestionInBooklet(bookletId, q.id, {
             extractedQuestion: aiResp.questionText,
             generatedSolution: aiResp.solutionMarkdown,
             maxMarks: aiResp.totalMarks,
             isProcessing: false
         });
         await loadBooklet();
-      } catch (err) { 
-        console.error("Upload failure:", err); 
-        setProcessStatus("Upload Failed.");
+        setIsDirty(false);
       }
+    } catch (err) { 
+      console.error("Upload failure:", err); 
+      setProcessStatus("Upload Failed.");
+    } finally {
+      setIsProcessing(false);
+      setProcessStatus('');
     }
-    setIsProcessing(false);
-    setProcessStatus('');
+  };
+
+  const handleOptimize = async () => {
+    if (!booklet || booklet.questions.length === 0) return;
+    setIsProcessing(true);
+    setProcessStatus('AI Agent: Optimizing Booklet Uniformity...');
+    try {
+      const optimized = await optimizeBookletContent(booklet.title, booklet.questions);
+      for (const optQ of optimized) {
+        await storageService.updateQuestionInBooklet(bookletId, optQ.id, {
+          extractedQuestion: optQ.extractedQuestion,
+          generatedSolution: optQ.generatedSolution,
+          maxMarks: optQ.maxMarks
+        });
+      }
+      await loadBooklet();
+      setProcessStatus('Optimization Complete!');
+    } catch (err) {
+      console.error("Optimization failure:", err);
+      setProcessStatus("Optimization Failed.");
+    }
+    setTimeout(() => {
+      setIsProcessing(false);
+      setProcessStatus('');
+    }, 2000);
   };
 
   if (!booklet) return null;
@@ -112,7 +179,31 @@ const BookletEditor: React.FC<BookletEditorProps> = ({ bookletId, onBack, userRo
       <header className="bg-white border-b sticky top-0 z-30 shadow-sm print:hidden">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between gap-6">
           <div className="flex items-center gap-4">
-            <button onClick={onBack} className="p-3 bg-gray-900 text-white rounded-2xl flex items-center gap-2 pr-6 shadow-xl">
+              <button onClick={async () => {
+                if (isDirty && booklet) {
+                  const save = confirm('You have unsaved changes. Save changes before exiting? Click OK to save, Cancel to stay.');
+                  if (save) {
+                    setIsProcessing(true);
+                    setProcessStatus('Saving booklet...');
+                    try {
+                      await storageService.updateBooklet(booklet);
+                      setIsDirty(false);
+                      setProcessStatus('Saved');
+                      setTimeout(() => setProcessStatus(''), 1000);
+                    } catch (e) {
+                      console.error('Save failed', e);
+                      setProcessStatus('Save Failed');
+                      setTimeout(() => setProcessStatus(''), 2000);
+                      setIsProcessing(false);
+                      return;
+                    }
+                    setIsProcessing(false);
+                  } else {
+                    return;
+                  }
+                }
+                onBack();
+              }} className="p-3 bg-gray-900 text-white rounded-2xl flex items-center gap-2 pr-6 shadow-xl">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m15 18-6-6 6-6"/></svg>
               <span className="text-[10px] font-black uppercase tracking-widest">Exit</span>
             </button>
@@ -126,11 +217,39 @@ const BookletEditor: React.FC<BookletEditorProps> = ({ bookletId, onBack, userRo
               <select className="bg-white border rounded-xl px-3 py-2 text-[11px] font-bold" value={currentTerm} onChange={e => setCurrentTerm(e.target.value)}>
                 {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
-              <input type="text" placeholder="Topic..." className="bg-white border rounded-xl px-4 py-2 text-[11px] font-bold w-40" value={currentTopic} onChange={e => setCurrentTopic(e.target.value)} />
+              <input type="text" placeholder="Topic..." className="bg-white border rounded-xl px-4 py-2 text-[11px] font-bold w-40" value={currentTopic} onChange={e => { setCurrentTopic(e.target.value); setIsDirty(true); }} />
               <label className="cursor-pointer bg-indigo-600 text-white px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all">
                 <input type="file" multiple accept="image/*" onChange={handleFileUpload} className="hidden" />
                 Add Units
               </label>
+              <button
+                onClick={async () => {
+                  if (!booklet) return;
+                  setIsProcessing(true);
+                  setProcessStatus('Saving booklet...');
+                  try {
+                    await storageService.updateBooklet(booklet);
+                    setProcessStatus('Saved');
+                    setTimeout(() => setProcessStatus(''), 1200);
+                  } catch (e) {
+                    console.error('Save failed', e);
+                    setProcessStatus('Save Failed');
+                    setTimeout(() => setProcessStatus(''), 2000);
+                  } finally {
+                    setIsProcessing(false);
+                  }
+                }}
+                className="bg-yellow-500 text-white px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-yellow-600 transition-all"
+              >
+                Save Booklet
+              </button>
+              <button 
+                onClick={handleOptimize}
+                className="bg-emerald-600 text-white px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all flex items-center gap-2"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+                AI Agent
+              </button>
             </div>
           )}
         </div>
@@ -144,34 +263,61 @@ const BookletEditor: React.FC<BookletEditorProps> = ({ bookletId, onBack, userRo
       )}
 
       <main className="flex-1 w-full max-w-7xl mx-auto px-6 py-12">
-        <div className="space-y-24">
-            {sortedQuestions.map(q => (
-              <div id={`q-${q.id}`} key={q.id}>
-                <QuestionItem 
-                  question={q} 
-                  bookletType={booklet.type} 
-                  variant="question" 
-                  onDelete={async (id) => { if(confirm("Remove?")) { await storageService.removeQuestionFromBooklet(booklet.id, id); loadBooklet(); } }} 
-                  onUpdate={async (id, updates) => { await storageService.updateQuestionInBooklet(booklet.id, id, updates); loadBooklet(); }}
-                  isStaff={isStaff}
-                  onRegenerate={async () => {
-                     setProcessStatus(`Regenerating Q${q.number}`);
-                     setIsProcessing(true);
-                     const aiResp = await processImageWithGemini(q.imageUrls, q.number, booklet.type);
-                     await storageService.updateQuestionInBooklet(booklet.id, q.id, {
-                       extractedQuestion: aiResp.questionText,
-                       generatedSolution: aiResp.solutionMarkdown,
-                       maxMarks: aiResp.totalMarks,
-                       isProcessing: false
-                     });
-                     await loadBooklet();
-                     setIsProcessing(false);
-                  }}
-                />
+        <div className="space-y-32">
+            {Object.entries(groupedQuestions).map(([topicName, questions]) => (
+              <div key={topicName} className="space-y-12">
+                <div className="border-b-4 border-gray-900 pb-4 mb-12">
+                  <h2 className="text-4xl font-black uppercase italic tracking-tighter text-gray-900">{topicName}</h2>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600 mt-2">{questions.length} Units in this topic</p>
+                </div>
+                
+                <div className="space-y-24">
+                  {questions.map(q => (
+                    <div id={`q-${q.id}`} key={q.id}>
+                      <QuestionItem 
+                        question={q} 
+                        bookletType={booklet.type} 
+                        variant="question" 
+                        onDelete={async (id) => { if(confirm("Remove?")) { await storageService.removeQuestionFromBooklet(booklet.id, id); await loadBooklet(); setIsDirty(false); } }} 
+                        onUpdate={async (id, updates) => { await storageService.updateQuestionInBooklet(booklet.id, id, updates); await loadBooklet(); setIsDirty(false); }}
+                        isStaff={isStaff}
+                        onAIFormat={async (id, field) => {
+                          const q = booklet.questions.find(x => x.id === id);
+                          if (!q) return;
+                          setProcessStatus(`AI Agent: Formatting ${field === 'extractedQuestion' ? 'Question' : 'Solution'}...`);
+                          setIsProcessing(true);
+                          try {
+                            const currentText = q[field] || '';
+                            const formatted = await formatTextWithAI(currentText, field === 'extractedQuestion' ? 'question' : 'solution');
+                            await storageService.updateQuestionInBooklet(booklet.id, id, { [field]: formatted });
+                            await loadBooklet();
+                          } catch (e) {
+                            console.error(e);
+                          }
+                          setIsProcessing(false);
+                          setProcessStatus('');
+                        }}
+                        onRegenerate={async () => {
+                           setProcessStatus(`Regenerating Q${q.number}`);
+                           setIsProcessing(true);
+                           const aiResp = await processImageWithGemini(q.imageUrls, q.number, booklet.type);
+                           await storageService.updateQuestionInBooklet(booklet.id, q.id, {
+                             extractedQuestion: aiResp.questionText,
+                             generatedSolution: aiResp.solutionMarkdown,
+                             maxMarks: aiResp.totalMarks,
+                             isProcessing: false
+                           });
+                           await loadBooklet();
+                           setIsProcessing(false);
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
             
-            {sortedQuestions.length === 0 && (
+            {Object.keys(groupedQuestions).length === 0 && (
               <div className="py-40 text-center border-4 border-dashed rounded-[4rem] border-gray-100">
                 <p className="text-4xl font-black text-gray-200 uppercase italic">Empty Module</p>
                 <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mt-4">Upload question images to begin sequence.</p>
