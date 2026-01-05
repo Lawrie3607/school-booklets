@@ -12,6 +12,7 @@ dist
 dist-ssr
 dist-electron
 release
+backups
 *.local
 
 # Large data files (loaded at runtime from GitHub)
