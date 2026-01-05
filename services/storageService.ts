@@ -290,12 +290,14 @@ const renumberBooklet = (booklet: Booklet) => {
 export const initStorage = async () => {
   try {
     await openDB();
-    // Note: Auto-sync removed to improve load time - use manual sync button in Dashboard
-    console.log('initStorage: Database ready. Use Sync button to pull remote data.');
-    // Optionally start periodic sync (disabled by default for performance)
-    // try { startPeriodicSync(60000); } catch (e) { /* non-fatal */ }
+    console.log('initStorage: Database ready. Starting lightweight user sync...');
+    // Auto-sync users only (lightweight, ensures Supabase users appear in User Control)
+    pullUsersFromRemote()
+      .then(res => console.log('initStorage: Pulled', res.pulled, 'users from Supabase'))
+      .catch(e => console.warn('initStorage: User sync failed:', e));
+    // Note: Full sync (booklets/assignments) disabled for performance - use Sync All button
   } catch (err) {
-    console.warn('initStorage: IndexedDB unavailable, continuing in degraded mode. Default library will be used.', err);
+    console.warn('initStorage: IndexedDB unavailable, continuing in degraded mode.', err);
   }
 };
 
@@ -663,7 +665,11 @@ export const resetPassword = async (email: string, newPassword: string) => {
   return true;
 };
 
-export const getUsers = () => performTransaction<User[]>(USER_STORE, 'readonly', tx => tx.objectStore(USER_STORE).getAll());
+export const getUsers = async () => {
+  const users = await performTransaction<User[]>(USER_STORE, 'readonly', tx => tx.objectStore(USER_STORE).getAll());
+  console.log('getUsers: Retrieved', (users || []).length, 'users from IndexedDB');
+  return users;
+};
 
 export const authorizeUser = async (userId: string, role: UserRole, status: UserStatus) => {
   const user = await performTransaction<User>(USER_STORE, 'readonly', tx => tx.objectStore(USER_STORE).get(userId));
@@ -985,12 +991,14 @@ export const pushUsersToRemote = async () => {
 
 // Pull users from Supabase into local IndexedDB
 export const pullUsersFromRemote = async () => {
+  console.log('pullUsersFromRemote: Fetching users from Supabase...');
   const { data, error } = await supabase.from('users').select('*');
   if (error) {
     console.error('pullUsersFromRemote error:', error);
     throw error;
   }
   const remote = (data || []) as any[];
+  console.log('pullUsersFromRemote: Fetched', remote.length, 'users from Supabase');
   if (!remote.length) return { pulled: 0 };
 
   const toPut: User[] = [];
@@ -1006,13 +1014,16 @@ export const pullUsersFromRemote = async () => {
       createdAt: Number(r.created_at || Date.now())
     };
     toPut.push(user);
+    console.log('pullUsersFromRemote: Processing user:', user.email, 'status:', user.status);
   }
 
   if (toPut.length > 0) {
+    console.log('pullUsersFromRemote: Saving', toPut.length, 'users to IndexedDB...');
     await performTransaction(USER_STORE, 'readwrite', tx => {
       const s = tx.objectStore(USER_STORE);
       toPut.forEach(u => s.put(u));
     });
+    console.log('pullUsersFromRemote: Successfully saved users to IndexedDB');
   }
   return { pulled: toPut.length };
 };

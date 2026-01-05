@@ -68,7 +68,9 @@ const Dashboard: React.FC<{
       const a = await storageService.getAssignments(isStudent ? currentUser.grade : undefined);
       setAssignments(a || []);
       if (isSuperAdmin) {
+          console.log('Dashboard: Loading users for Super Admin...');
           const u = await storageService.getUsers();
+          console.log('Dashboard: Loaded', (u || []).length, 'users', u);
           setUsers(u || []);
       }
     } catch (e) {
