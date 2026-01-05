@@ -144,8 +144,14 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
             const a = await storageService.getAssignments(isStudent ? currentUser.grade : undefined);
             setAssignments(a || []);
             if (isSuperAdmin) {
-                const u = await storageService.getUsers();
-                setUsers(u || []);
+                try {
+                  console.log('DashboardContent: pulling users from Supabase before reading local cache...');
+                  await storageService.pullUsersFromRemote();
+                } catch (pullErr) {
+                  console.warn('DashboardContent: pullUsersFromRemote failed', pullErr);
+                }
+                const latestUsers = await storageService.getUsers();
+                setUsers(latestUsers || []);
             }
         }
         catch (e) {
@@ -301,7 +307,16 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
                 <h1 className="text-6xl font-black text-gray-900 tracking-tighter uppercase leading-none italic">{isStaff ? 'Master' : 'Student'}</h1>
                 {isSuperAdmin && (
                   <div className="flex items-center gap-3">
-                    <button onClick={async () => { try { await storageService.pullUsersFromRemote(); } catch (e) { console.error('Failed to pull users before opening User Control', e); } setShowUserManagement(true); }} title="Users" className="p-4 bg-indigo-600 text-white rounded-2xl hover:bg-black transition-all shadow-xl">
+                    <button onClick={async () => {
+                      try {
+                        await storageService.pullUsersFromRemote();
+                        const latestUsers = await storageService.getUsers();
+                        setUsers(latestUsers || []);
+                      } catch (e) {
+                        console.error('Failed to pull users before opening User Control', e);
+                      }
+                      setShowUserManagement(true);
+                    }} title="Users" className="p-4 bg-indigo-600 text-white rounded-2xl hover:bg-black transition-all shadow-xl">
                       <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
                         <circle cx="9" cy="7" r="4" />
