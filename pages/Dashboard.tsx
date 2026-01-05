@@ -65,6 +65,12 @@ const Dashboard: React.FC<{
         const chem = (b || []).filter(bt => normalize(bt.grade) === normalize('Grade 12') && ((bt.subject||'').toString().toLowerCase().includes('chemistry')));
         console.log('DEBUG: Grade 12 Chemistry count (Dashboard):', chem.length, chem.map(c => ({ id: c.id, title: c.title, type: c.type, isPublished: c.isPublished })));
       } catch (e) { /* ignore */ }
+      try {
+        console.log('Dashboard: pulling assignments from Supabase before loading local assignments...');
+        await storageService.pullAssignmentsFromRemote().catch(e => { console.warn('Dashboard: pullAssignmentsFromRemote failed', e); });
+      } catch (e) {
+        console.warn('Dashboard: Unexpected error pulling assignments', e);
+      }
       const a = await storageService.getAssignments(isStudent ? currentUser.grade : undefined);
       setAssignments(a || []);
       if (isSuperAdmin) {
@@ -165,7 +171,7 @@ const Dashboard: React.FC<{
               </div>
               {isSuperAdmin && (
                 <div className="flex items-center gap-3 mt-4">
-                  <button id="btn-user-mgmt" name="btnUserMgmt" onClick={() => setShowUserManagement(true)} title="Users" className="p-4 bg-indigo-600 text-white rounded-2xl hover:bg-black transition-all shadow-xl"><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
+                  <button id="btn-user-mgmt" name="btnUserMgmt" onClick={async () => { try { await storageService.pullUsersFromRemote(); } catch (e) { console.error('Failed to pull users before opening User Control', e); } setShowUserManagement(true); }} title="Users" className="p-4 bg-indigo-600 text-white rounded-2xl hover:bg-black transition-all shadow-xl"><svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
                   <a id="btn-supabase" href="https://supabase.com/dashboard/project/zqpdbmqneebjsytgkodl/editor/17484?schema=public" target="_blank" rel="noreferrer" title="Open Supabase Users Table" className="px-6 py-4 bg-yellow-500 text-white rounded-2xl hover:bg-yellow-600 transition-all shadow-xl flex items-center gap-2 font-bold text-sm uppercase tracking-wide">📊 Supabase<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
                 </div>
               )}

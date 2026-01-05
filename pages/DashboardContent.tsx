@@ -135,6 +135,12 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
               const chem = (b || []).filter(bt => normalize(bt.grade) === normalize('Grade 12') && ((bt.subject||'').toString().toLowerCase().includes('chemistry')));
               console.log('DEBUG: Grade 12 Chemistry count (DashboardContent):', chem.length, chem.map(c => ({ id: c.id, title: c.title, type: c.type, isPublished: c.isPublished })));
             } catch (e) { /* ignore debug errors */ }
+            try {
+              console.log('DashboardContent: pulling assignments from Supabase before loading local assignments...');
+              await storageService.pullAssignmentsFromRemote().catch(e => { console.warn('DashboardContent: pullAssignmentsFromRemote failed', e); });
+            } catch (e) {
+              console.warn('DashboardContent: Unexpected error pulling assignments', e);
+            }
             const a = await storageService.getAssignments(isStudent ? currentUser.grade : undefined);
             setAssignments(a || []);
             if (isSuperAdmin) {
@@ -294,7 +300,7 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
               <div className="flex items-center gap-5">
                 <h1 className="text-6xl font-black text-gray-900 tracking-tighter uppercase leading-none italic">{isStaff ? 'Master' : 'Student'}</h1>
                 {isSuperAdmin && (
-                  <button onClick={() => setShowUserManagement(true)} title="Users" className="p-4 bg-indigo-600 text-white rounded-2xl hover:bg-black transition-all shadow-xl">
+                  <button onClick={async () => { try { await storageService.pullUsersFromRemote(); } catch (e) { console.error('Failed to pull users before opening User Control', e); } setShowUserManagement(true); }} title="Users" className="p-4 bg-indigo-600 text-white rounded-2xl hover:bg-black transition-all shadow-xl">
                     <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
                       <circle cx="9" cy="7" r="4" />
