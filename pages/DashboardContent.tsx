@@ -72,12 +72,25 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
     const isStudent = effectiveRole === UserRole.STUDENT;
     const normalize = (s?: string) => (s || '').toString().trim().toLowerCase();
     const visibleBooklets = booklets.filter(b => {
-      if (!isStudent) return true;
+      // Super-admin sees everything
+      if (isSuperAdmin) return true;
+
       const matchGrade = normalize(b.grade) === normalize(currentUser.grade);
       // Allow authorized students to see their grade booklets without an extra "publish" step.
       const studentCanSee = (b.isPublished || currentUser.status === UserStatus.AUTHORIZED);
-      // Show all booklet types (removed READING_ONLY filter)
-      return matchGrade && studentCanSee;
+
+      if (isStudent) {
+        // Students portal: only show Questions Only booklets
+        return matchGrade && studentCanSee && b.type === BookletType.READING_ONLY;
+      }
+
+      if (isStaff) {
+        // Teachers/staff portal: show only booklets with solutions for marking
+        return b.type === BookletType.WITH_SOLUTIONS;
+      }
+
+      // Fallback: show
+      return true;
     });
     // Sort booklets by grade descending (per GRADELIST order) and then title
     const gradeOrder: Record<string, number> = GRADELIST.reduce((m, g, i) => { m[g] = i; return m; }, {} as Record<string, number>);
