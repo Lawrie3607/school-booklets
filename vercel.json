@@ -1,6 +1,6 @@
 {
   "framework": null,
-  "buildCommand": "npm install && npm run build:web",
+  "buildCommand": "npm run build:web",
   "outputDirectory": "dist",
   "installCommand": "npm install --include=dev"
 }
