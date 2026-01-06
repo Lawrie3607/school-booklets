@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, globalShortcut } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { createRequire } from 'module';
@@ -78,6 +78,14 @@ const createWindow = () => {
     icon: iconPath ?? undefined,
   });
 
+  // Prevent OS-level screenshots / screen recording where supported
+  try {
+    // This is a no-op on platforms that don't support it, but helps on Windows/macOS
+    mainWindow.setContentProtection(true);
+  } catch (e) {
+    console.warn('setContentProtection not supported in this environment', e);
+  }
+
   // In development, load from Vite dev server
   // In production, load the built files
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -100,6 +108,21 @@ const createWindow = () => {
     if (!mainWindow) return;
     mainWindow.show();
   });
+
+  // Register global shortcuts to reduce risk of students opening devtools or refreshing
+  try {
+    // Disable common devtools and reload shortcuts while the window is focused
+    const reg = (accel: string) => {
+      try { globalShortcut.register(accel, () => {}); } catch (e) { /* ignore */ }
+    };
+    reg('CommandOrControl+Shift+I');
+    reg('CommandOrControl+Shift+C');
+    reg('F12');
+    reg('CommandOrControl+R');
+    reg('F5');
+  } catch (e) {
+    console.warn('globalShortcut registration failed', e);
+  }
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -160,4 +183,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+// Clean up global shortcuts on exit
+app.on('will-quit', () => {
+  try { globalShortcut.unregisterAll(); } catch (e) { /* ignore */ }
 });

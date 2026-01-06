@@ -6,6 +6,7 @@ import AssignmentPortal from './pages/AssignmentPortal.tsx';
 import SubmissionReview from './pages/SubmissionReview.tsx';
 import { initStorage, registerUser, loginUser, hasAnyUsers, checkAndSeedDatabase, factoryReset, resetPassword, syncBooklets, createBooklet } from './services/storageService';
 import * as storageService from './services/storageService';
+import SubjectSelector from './components/SubjectSelector';
 import { User, UserRole, UserStatus, CreateBookletDTO, BookletType } from './types';
 
 // Expose storageService globally for debugging
@@ -31,6 +32,8 @@ const App: React.FC = () => {
   const [resetMsg, setResetMsg] = useState<string | null>(null);
   const [isFirstRun, setIsFirstRun] = useState<boolean | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [showSubjectSelector, setShowSubjectSelector] = useState(false);
+  const [notifMessage, setNotifMessage] = useState<string | null>(null);
   const [loadStatus, setLoadStatus] = useState("Initializing Core...");
   const GEMINI_KEY = (process.env.GEMINI_API_KEY || process.env.API_KEY) as string | undefined;
   const [showReset, setShowReset] = useState(false);
@@ -83,6 +86,67 @@ const App: React.FC = () => {
     };
     init();
   }, []);
+
+  // When a user is present and is a student, show subject selector if they haven't chosen subjects
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    const setup = async () => {
+      if (!currentUser) return;
+      if (currentUser.role === UserRole.STUDENT) {
+        const subs = await storageService.getStudentSubjects(currentUser.id);
+        if (!subs || subs.length === 0) setShowSubjectSelector(true);
+
+        // initial check for new booklets
+        const newOnes = await storageService.checkForNewBookletsForUser(currentUser.id);
+        if (newOnes && newOnes.length > 0) {
+          setNotifMessage(`New booklets available for your subjects (${newOnes.length})`);
+        }
+
+        // periodic check every 60s
+        intervalId = setInterval(async () => {
+          try {
+            const found = await storageService.checkForNewBookletsForUser(currentUser.id);
+            if (found && found.length > 0) {
+              setNotifMessage(`New booklets available for your subjects (${found.length})`);
+            }
+          } catch (e) {
+            // ignore
+          }
+        }, 60000);
+      }
+    };
+    setup();
+    return () => { if (intervalId) clearInterval(intervalId); };
+  }, [currentUser]);
+
+  // Listen for submission changes and notify relevant users
+  useEffect(() => {
+    if (!currentUser) return;
+    const handler = (ev: any) => {
+      try {
+        const sub: any = ev.detail?.submission;
+        if (!sub) return;
+        // If current user is staff, notify on new SUBMITTED submissions
+        if (currentUser.role === UserRole.STAFF || currentUser.role === UserRole.SUPER_ADMIN) {
+          if (sub.status === 'SUBMITTED') {
+            setNotifMessage(`New submission from ${sub.studentName}`);
+          } else {
+            setNotifMessage(`Submission updated: ${sub.studentName}`);
+          }
+        }
+        // If current user is the student, notify when their submission is MARKED or RECORDED
+        if (currentUser.role === UserRole.STUDENT && sub.studentId === currentUser.id) {
+          if (sub.status === 'MARKED' || sub.status === 'RECORDED') {
+            setNotifMessage('Your submission has been graded.');
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+    window.addEventListener('submission:changed', handler as EventListener);
+    return () => window.removeEventListener('submission:changed', handler as EventListener);
+  }, [currentUser]);
 
   // Global refresh shortcut: Ctrl/Cmd+R or F5 (ignore when typing)
   useEffect(() => {
@@ -262,7 +326,17 @@ const App: React.FC = () => {
           </button>
         </div>
       )}
+      {notifMessage && (
+        <div className="fixed left-4 bottom-4 z-50">
+          <div className="bg-indigo-600 text-white px-4 py-3 rounded-lg shadow-lg font-bold">
+            {notifMessage} <button onClick={() => setNotifMessage(null)} className="ml-3 underline">Dismiss</button>
+          </div>
+        </div>
+      )}
 
+      {currentUser && currentUser.role === UserRole.STUDENT && showSubjectSelector && (
+        <SubjectSelector user={currentUser} onSaved={() => setShowSubjectSelector(false)} />
+      )}
       <Dashboard onSelectBooklet={setActiveBookletId} onSelectAssignment={setActiveAssignmentId} onViewSubmissions={setReviewAssignmentId} userRole={currentUser.role} currentUser={effectiveUserForPages!} onLogout={handleLogout} isPreviewMode={isPreviewMode} setIsPreviewMode={setIsPreviewMode} />
     </>
   );

@@ -23,6 +23,9 @@ const AssignmentPortal: React.FC<AssignmentPortalProps> = ({ id, mode, currentUs
   const [isWindowFocused, setIsWindowFocused] = useState(true);
 
   const isStaff = currentUser.role === UserRole.STAFF || currentUser.role === UserRole.SUPER_ADMIN;
+   const isDesktop = typeof (window as any).electron !== 'undefined' && !!(window as any).electron.getCameraSnapshot;
+   const hasWebCamera = typeof navigator !== 'undefined' && !!(navigator.mediaDevices && (navigator.mediaDevices as any).getUserMedia);
+   const canUseCamera = isDesktop || hasWebCamera;
 
   useEffect(() => {
     const load = async () => {
@@ -278,9 +281,93 @@ const AssignmentPortal: React.FC<AssignmentPortalProps> = ({ id, mode, currentUs
                           <label htmlFor={`upload-handwriting-${currentQ.id}`} className={`cursor-pointer group p-8 rounded-[2rem] border-2 border-dashed transition-all flex flex-col items-center justify-center gap-3 ${currentAnswers[currentQ.id]?.img ? 'bg-green-50 border-green-200' : 'bg-indigo-50/30 border-indigo-100 hover:bg-indigo-50'}`}>
                              <input id={`upload-handwriting-${currentQ.id}`} name={`uploadImg-${currentQ.id}`} type="file" accept="image/*" className="hidden" onChange={e => handleImageUpload(currentQ.id, e)} disabled={answerModes[currentQ.id] === 'type'} />
                              {currentAnswers[currentQ.id]?.img ? (
-                                <p className="font-black uppercase tracking-widest text-[9px] text-green-600">Photo Attached</p>
+                                <div className="w-full flex flex-col items-center gap-3">
+                                   <img src={currentAnswers[currentQ.id].img} alt="Uploaded handwriting" className="w-44 h-32 object-contain rounded-lg border" />
+                                   <div className="flex gap-3">
+                                      <button type="button" onClick={async () => {
+                                         // Retake: prefer camera capture, otherwise open file picker
+                                         try {
+                                            if (canUseCamera) {
+                                               let dataUrl: string | null = null;
+                                               if ((window as any).electron && typeof (window as any).electron.getCameraSnapshot === 'function') {
+                                                  dataUrl = await (window as any).electron.getCameraSnapshot();
+                                               } else if (hasWebCamera) {
+                                                  const stream = await (navigator.mediaDevices as any).getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+                                                  const track = stream.getVideoTracks()[0];
+                                                  const video = document.createElement('video');
+                                                  video.autoplay = true; video.muted = true; video.playsInline = true; video.srcObject = stream;
+                                                  await new Promise(res => { video.onloadedmetadata = () => { video.play(); res(null); }; });
+                                                  const canvas = document.createElement('canvas');
+                                                  canvas.width = video.videoWidth || 1280; canvas.height = video.videoHeight || 720;
+                                                  const ctx = canvas.getContext('2d');
+                                                  if (!ctx) throw new Error('Canvas unsupported');
+                                                  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                                  dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                                                  try { track.stop(); } catch(_) {}
+                                                  stream.getTracks().forEach((t: any) => { try { t.stop(); } catch(_) {} });
+                                               }
+                                               if (dataUrl) {
+                                                  setCurrentAnswers(prev => ({ ...prev, [currentQ.id]: { ...prev[currentQ.id], img: dataUrl, text: '' } }));
+                                                  setAnswerModes(m => ({ ...m, [currentQ.id]: 'upload' }));
+                                                  setOcrWarnings(w => { const nw = { ...w }; delete nw[currentQ.id]; return nw; });
+                                                  return;
+                                               }
+                                            }
+                                            // Fallback to file picker
+                                            const input = document.getElementById(`upload-handwriting-${currentQ.id}`) as HTMLInputElement | null;
+                                            if (input) input.click();
+                                         } catch (err) {
+                                            console.error('Retake failed', err);
+                                            alert('Retake failed.');
+                                         }
+                                      }} className="px-3 py-2 bg-indigo-600 text-white rounded-lg font-bold text-sm">Retake</button>
+
+                                      <button type="button" onClick={() => {
+                                         setCurrentAnswers(prev => ({ ...prev, [currentQ.id]: { ...prev[currentQ.id], img: '' } }));
+                                         setAnswerModes(m => ({ ...m, [currentQ.id]: undefined as any }));
+                                         setOcrWarnings(w => { const nw = { ...w }; delete nw[currentQ.id]; return nw; });
+                                      }} className="px-3 py-2 bg-white border rounded-lg font-bold text-sm">Remove</button>
+                                   </div>
+                                </div>
                              ) : (
-                                <p className="font-black uppercase tracking-widest text-[10px] text-center">Capture Handwriting</p>
+                                <div className="flex flex-col items-center gap-2">
+                                   <p className="font-black uppercase tracking-widest text-[10px] text-center">Capture Handwriting</p>
+                                   {canUseCamera && !isStaff && (
+                                      <button type="button" onClick={async () => {
+                                         try {
+                                            let dataUrl: string | null = null;
+                                            if ((window as any).electron && typeof (window as any).electron.getCameraSnapshot === 'function') {
+                                               dataUrl = await (window as any).electron.getCameraSnapshot();
+                                            } else if (hasWebCamera) {
+                                               // Browser fallback: capture a single frame via getUserMedia
+                                               const stream = await (navigator.mediaDevices as any).getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+                                               const track = stream.getVideoTracks()[0];
+                                               const video = document.createElement('video');
+                                               video.autoplay = true; video.muted = true; video.playsInline = true; video.srcObject = stream;
+                                               await new Promise(res => { video.onloadedmetadata = () => { video.play(); res(null); }; });
+                                               const canvas = document.createElement('canvas');
+                                               canvas.width = video.videoWidth || 1280; canvas.height = video.videoHeight || 720;
+                                               const ctx = canvas.getContext('2d');
+                                               if (!ctx) throw new Error('Canvas unsupported');
+                                               ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                               dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                                               try { track.stop(); } catch(_) {}
+                                               stream.getTracks().forEach((t: any) => { try { t.stop(); } catch(_) {} });
+                                            }
+                                            if (dataUrl) {
+                                               setCurrentAnswers(prev => ({ ...prev, [currentQ.id]: { ...prev[currentQ.id], img: dataUrl, text: '' } }));
+                                               setAnswerModes(m => ({ ...m, [currentQ.id]: 'upload' }));
+                                               setOcrWarnings(w => { const nw = { ...w }; delete nw[currentQ.id]; return nw; });
+                                            } else {
+                                               alert('Camera capture failed or was denied.');
+                                            }
+                                         } catch (err) {
+                                            console.error(err);
+                                            alert('Camera capture failed.');
+                                         }
+                                      }} className="mt-2 px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold text-sm">Use Camera</button>
+                                   )}
+                                </div>
                              )}
                                    {ocrWarnings[currentQ.id] && (
                                       <div className="mt-3 text-xs text-red-600 font-bold">Warning: Uploaded image appears to contain typed text — please upload handwritten work instead.</div>

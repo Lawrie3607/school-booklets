@@ -398,6 +398,65 @@ export const addQuestionsToBooklet = async (bookletId: string, questions: Questi
   return booklet;
 };
 
+// --- Student subscription helpers ---
+const USER_SUBJECTS_KEY = (userId: string) => `pcl_user_subjects_${userId}`;
+const USER_SEEN_LIB_KEY = (userId: string) => `pcl_user_seenlib_${userId}`;
+
+export const saveStudentSubjects = async (userId: string, subjects: string[]) => {
+  try {
+    localStorage.setItem(USER_SUBJECTS_KEY(userId), JSON.stringify(subjects || []));
+    // mark current library as seen for these subjects so students don't get flooded on save
+    const all = await getBooklets();
+    const ids = (all || []).filter(b => subjects.includes((b.subject || '').toString())).map(b => b.id);
+    localStorage.setItem(USER_SEEN_LIB_KEY(userId), JSON.stringify(ids));
+    return true;
+  } catch (e) {
+    console.warn('saveStudentSubjects failed', e);
+    return false;
+  }
+};
+
+export const getStudentSubjects = async (userId: string) => {
+  try {
+    const raw = localStorage.getItem(USER_SUBJECTS_KEY(userId));
+    if (!raw) return [] as string[];
+    return JSON.parse(raw) as string[];
+  } catch (e) {
+    return [] as string[];
+  }
+};
+
+export const markLibrarySeenForUser = async (userId: string, bookletIds: string[]) => {
+  try {
+    localStorage.setItem(USER_SEEN_LIB_KEY(userId), JSON.stringify(bookletIds || []));
+    return true;
+  } catch (e) {
+    return false;
+  }
+};
+
+// Returns an array of newly available booklets that match user's subjects and were not previously seen.
+export const checkForNewBookletsForUser = async (userId: string) => {
+  try {
+    const subjects = await getStudentSubjects(userId);
+    if (!subjects || subjects.length === 0) return [] as Booklet[];
+    const all = await getBooklets();
+    const seenRaw = localStorage.getItem(USER_SEEN_LIB_KEY(userId));
+    const seen = seenRaw ? (JSON.parse(seenRaw) as string[]) : [] as string[];
+    const matching = (all || []).filter(b => subjects.includes((b.subject || '').toString()));
+    const newOnes = matching.filter(b => !seen.includes(b.id));
+    if (newOnes.length > 0) {
+      // update seen list to include these
+      const updated = Array.from(new Set([...(seen || []), ...matching.map(b => b.id)]));
+      localStorage.setItem(USER_SEEN_LIB_KEY(userId), JSON.stringify(updated));
+    }
+    return newOnes;
+  } catch (e) {
+    console.warn('checkForNewBookletsForUser failed', e);
+    return [] as Booklet[];
+  }
+};
+
 export const updateQuestionInBooklet = async (bookletId: string, qId: string, updates: Partial<Question>) => {
   const booklet = await getBookletById(bookletId);
   if (!booklet) return null;
@@ -1281,6 +1340,11 @@ export const submitWork = async (sub: Submission) => {
   await performTransaction(SUBMISSION_STORE, 'readwrite', tx => { tx.objectStore(SUBMISSION_STORE).put(sub); });
   // Auto-sync to Supabase
   syncSubmissionToRemote(sub).catch(e => console.warn('Sync failed:', e));
+  try {
+    if (typeof window !== 'undefined' && (window as any).dispatchEvent) {
+      try { (window as any).dispatchEvent(new CustomEvent('submission:changed', { detail: { submission: sub } })); } catch(_) {}
+    }
+  } catch (_) {}
 };
 export const getSubmissions = (aId?: string, sId?: string) => performTransaction<Submission[]>(SUBMISSION_STORE, 'readonly', tx => tx.objectStore(SUBMISSION_STORE).getAll()).then(all => {
   let f = all || [];

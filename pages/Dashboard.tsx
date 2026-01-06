@@ -1,3 +1,4 @@
+export { default } from './DashboardContent.tsx';
 
 import React, { useState, useEffect } from 'react';
 import { Booklet, CreateBookletDTO, Subject, BookletType, UserRole, User, UserStatus, Assignment } from '../types';

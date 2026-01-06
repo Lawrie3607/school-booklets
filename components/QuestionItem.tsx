@@ -49,10 +49,10 @@ const QuestionItem: React.FC<QuestionItemProps> = ({
   };
 
   if (variant === 'question') {
-    return (
-      <div id={`question-${question.id}`} className="mb-24 grid grid-cols-1 lg:grid-cols-2 gap-12 group/q print:block">
+      return (
+         <div id={`question-${question.id}`} className="mb-32 flex flex-col sm:flex-row gap-16 group/q print:block items-start">
         {/* BLOCK A: THE RESOURCE */}
-        <div className="space-y-6">
+            <div className="w-full sm:w-1/2 space-y-6 flex-shrink-0">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-4">
               <span className="bg-gray-900 text-white w-12 h-12 rounded-xl flex items-center justify-center font-black text-xs shadow-lg">Q{question.number}</span>
@@ -94,7 +94,7 @@ const QuestionItem: React.FC<QuestionItemProps> = ({
 
         {/* BLOCK B: THE MEMORANDUM */}
         {bookletType === BookletType.WITH_SOLUTIONS && (
-          <div className="bg-white rounded-[3rem] p-10 border-4 border-indigo-50 shadow-2xl flex flex-col print:hidden">
+               <div className="w-full sm:w-1/2 bg-white rounded-[3rem] p-10 border-4 border-indigo-50 shadow-2xl flex flex-col print:hidden">
              <div className="flex justify-between items-center mb-8">
                 <div>
                    <h4 className="text-lg font-black uppercase tracking-tighter italic leading-none">Memorandum Block</h4>

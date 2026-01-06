@@ -72,20 +72,17 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
     const isStudent = effectiveRole === UserRole.STUDENT;
     const normalize = (s?: string) => (s || '').toString().trim().toLowerCase();
     const visibleBooklets = booklets.filter(b => {
-      // Super-admin sees everything
-      if (isSuperAdmin) return true;
-
       const matchGrade = normalize(b.grade) === normalize(currentUser.grade);
       // Allow authorized students to see their grade booklets without an extra "publish" step.
       const studentCanSee = (b.isPublished || currentUser.status === UserStatus.AUTHORIZED);
 
       if (isStudent) {
-        // Students portal: only show Questions Only booklets
+        // Students portal: only show Reading-only booklets
         return matchGrade && studentCanSee && b.type === BookletType.READING_ONLY;
       }
 
       if (isStaff) {
-        // Teachers/staff portal: show only booklets with solutions for marking
+        // Teachers/staff (including super-admin in staff view): show only booklets with solutions for marking
         return b.type === BookletType.WITH_SOLUTIONS;
       }
 
@@ -464,16 +461,18 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
                   <div className="mb-6 flex items-center justify-between">
                     <h3 className="text-2xl font-black uppercase tracking-tight">{grade}</h3>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-16">
+                  <div className="flex gap-8 overflow-x-auto pb-6 -mx-4 px-4 snap-x snap-mandatory">
                     {items.map(b => (
-                      <BookletCover
-                        key={b.id}
-                        booklet={b}
-                        isStaff={isStaff}
-                        onClick={() => onSelectBooklet(b.id)}
-                        onEdit={(booklet) => { setEditingBooklet(booklet); setShowEditModal(true); }}
-                        onUpdate={async (id, subject) => { try { await storageService.updateBookletSubject(id, subject); setToast({message: `Marked ${subject}.`, type: 'success'}); refreshData(); setTimeout(()=>setToast(null),2000); } catch(err:any){ setToast({message: err.message||'Update failed', type:'error'}); } }}
-                      />
+                      <div key={b.id} className="flex-shrink-0 snap-start">
+                        <BookletCover
+                          booklet={b}
+                          className="mx-4"
+                          isStaff={isStaff}
+                          onClick={() => onSelectBooklet(b.id)}
+                          onEdit={(booklet) => { setEditingBooklet(booklet); setShowEditModal(true); }}
+                          onUpdate={async (id, subject) => { try { await storageService.updateBookletSubject(id, subject); setToast({message: `Marked ${subject}.`, type: 'success'}); refreshData(); setTimeout(()=>setToast(null),2000); } catch(err:any){ setToast({message: err.message||'Update failed', type:'error'}); } }}
+                        />
+                      </div>
                     ))}
                   </div>
                 </div>
