@@ -2,9 +2,5 @@
   "framework": null,
   "buildCommand": "npm install && npm run build:web",
   "outputDirectory": "dist",
-  "installCommand": "npm install --include=dev",
-  "routes": [
-    { "src": "/assets/(.*)", "dest": "/assets/$1" },
-    { "src": "/(.*)", "dest": "/index.html" }
-  ]
+  "installCommand": "npm install --include=dev"
 }
