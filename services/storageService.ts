@@ -1,6 +1,7 @@
 
-import { Booklet, CreateBookletDTO, Question, BookletType, User, UserRole, UserStatus, Assignment, Submission } from "../types";
+import { Booklet, CreateBookletDTO, Question, BookletType, User, UserRole, UserStatus, Assignment, Submission, Notification } from "../types";
 import { supabase } from "./supabaseClient";
+import { pushFileToGithub } from './githubService';
 
 // Remote URLs for chunked library data (loaded at runtime to avoid deploy size limits)
 const LIBRARY_CHUNK_URLS = [
@@ -92,6 +93,24 @@ async function fetchLibraryChunks(): Promise<Booklet[]> {
           // ignore missing local files
         }
       }
+      // If deployed and local fetches fail, try raw GitHub URLs for common data files
+      if (localTexts.length === 0) {
+        const rawBase = 'https://raw.githubusercontent.com/Lawrie3607/booklet_library_backup_2025-12-31/main/public/data';
+        const fallbackFiles = ['chem_12.json','librarybooks.json'];
+        for (const f of fallbackFiles) {
+          try {
+            const u = `${rawBase}/${f}`;
+            const r = await fetch(u);
+            if (r.ok) {
+              const txt = await r.text();
+              if (txt && txt.trim().length > 0) {
+                localTexts.push(txt);
+                console.log('Loaded fallback remote library chunk:', u);
+              }
+            }
+          } catch (e) { /* ignore */ }
+        }
+      }
     }
   } catch (e) {
     console.error('Error loading local files:', e);
@@ -169,7 +188,10 @@ const STORE_NAME = 'booklets';
 const USER_STORE = 'users';
 const ASSIGNMENT_STORE = 'assignments';
 const SUBMISSION_STORE = 'submissions';
-const DB_VERSION = 5; 
+const NOTIFICATION_STORE = 'notifications';
+const PUSH_QUEUE_STORE = 'push_queue';
+const SETTINGS_STORE = 'settings';
+const DB_VERSION = 8; 
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -191,11 +213,15 @@ const openDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(USER_STORE)) db.createObjectStore(USER_STORE, { keyPath: 'id' });
       if (!db.objectStoreNames.contains(ASSIGNMENT_STORE)) db.createObjectStore(ASSIGNMENT_STORE, { keyPath: 'id' });
       if (!db.objectStoreNames.contains(SUBMISSION_STORE)) db.createObjectStore(SUBMISSION_STORE, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(NOTIFICATION_STORE)) db.createObjectStore(NOTIFICATION_STORE, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(PUSH_QUEUE_STORE)) db.createObjectStore(PUSH_QUEUE_STORE, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(SETTINGS_STORE)) db.createObjectStore(SETTINGS_STORE, { keyPath: 'key' });
     };
   });
 };
 
 let _periodicSyncId: ReturnType<typeof setInterval> | null = null;
+let _githubPushProcessorId: ReturnType<typeof setInterval> | null = null;
 
 export const startPeriodicSync = (ms = 60000) => {
   try {
@@ -290,12 +316,24 @@ const renumberBooklet = (booklet: Booklet) => {
 export const initStorage = async () => {
   try {
     await openDB();
-    console.log('initStorage: Database ready. Starting lightweight user sync...');
-    // Auto-sync users only (lightweight, ensures Supabase users appear in User Control)
-    pullUsersFromRemote()
-      .then(res => console.log('initStorage: Pulled', res.pulled, 'users from Supabase'))
-      .catch(e => console.warn('initStorage: User sync failed:', e));
-    // Note: Full sync (booklets/assignments) disabled for performance - use Sync All button
+    console.log('initStorage: Database ready. Running full sync in background...');
+    
+    // Run full sync in background (don't block app startup)
+    syncAllData()
+      .then(res => console.log('initStorage: Full sync complete', res))
+      .catch(e => console.warn('initStorage: Full sync failed (app will use local data):', e));
+    
+    // If persisted processor flag is enabled, start the GitHub push processor
+    try {
+      const enabled = await isGithubProcessorEnabled();
+      if (enabled) {
+        startGithubPushProcessor();
+        console.log('initStorage: GitHub push processor started due to persisted setting');
+      }
+    } catch (e) { /* ignore */ }
+    
+    // Start periodic sync every 2 minutes
+    startPeriodicSync(120000);
   } catch (err) {
     console.warn('initStorage: IndexedDB unavailable, continuing in degraded mode.', err);
   }
@@ -307,6 +345,145 @@ export const factoryReset = async () => {
     const req = indexedDB.deleteDatabase(DB_NAME);
     req.onsuccess = () => { localStorage.clear(); resolve(null); };
   });
+};
+
+// --- Notification helpers ---
+export const createNotificationForUser = async (userId: string, title: string, body?: string, data?: any, type: string = 'ASSIGNMENT') => {
+  const n: Notification = { id: crypto.randomUUID(), userId, type, title, body, data, isRead: false, createdAt: Date.now(), archivedAt: null };
+  await performTransaction(NOTIFICATION_STORE, 'readwrite', tx => { tx.objectStore(NOTIFICATION_STORE).put(n); });
+  try {
+    if (typeof window !== 'undefined' && (window as any).dispatchEvent) {
+      try { (window as any).dispatchEvent(new CustomEvent('notification:changed', { detail: { notification: n } })); } catch(_) {}
+    }
+  } catch (_) {}
+  return n;
+};
+
+export const getNotificationsForUser = async (userId: string) => {
+  const all = await performTransaction<Notification[]>(NOTIFICATION_STORE, 'readonly', tx => tx.objectStore(NOTIFICATION_STORE).getAll()) || [];
+  return (all || []).filter(n => n.userId === userId && !n.archivedAt).sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+};
+
+export const markNotificationRead = async (id: string) => {
+  const n = await performTransaction<Notification>(NOTIFICATION_STORE, 'readonly', tx => tx.objectStore(NOTIFICATION_STORE).get(id));
+  if (!n) return null;
+  n.isRead = true;
+  await performTransaction(NOTIFICATION_STORE, 'readwrite', tx => tx.objectStore(NOTIFICATION_STORE).put(n));
+  return n;
+};
+
+export const archiveNotification = async (id: string) => {
+  const n = await performTransaction<Notification>(NOTIFICATION_STORE, 'readonly', tx => tx.objectStore(NOTIFICATION_STORE).get(id));
+  if (!n) return null;
+  n.archivedAt = Date.now();
+  await performTransaction(NOTIFICATION_STORE, 'readwrite', tx => tx.objectStore(NOTIFICATION_STORE).put(n));
+  return n;
+};
+
+// --- GitHub push queue helpers ---
+export const enqueueGithubPush = async (item: any) => {
+  // item must include: id, owner, repo, path, content, message, branch?
+  if (!item) throw new Error('Invalid enqueue item');
+  // ensure createdAt
+  item.createdAt = Date.now();
+  await performTransaction(PUSH_QUEUE_STORE, 'readwrite', tx => { tx.objectStore(PUSH_QUEUE_STORE).put(item); });
+  return item;
+};
+
+export const getGithubPushQueue = async () => {
+  const all = await performTransaction<any[]>(PUSH_QUEUE_STORE, 'readonly', tx => tx.objectStore(PUSH_QUEUE_STORE).getAll());
+  return (all || []).sort((a,b) => (a.createdAt||0) - (b.createdAt||0));
+};
+
+export const processGithubPushQueueOnce = async () => {
+  const queue = await getGithubPushQueue();
+  if (!queue || queue.length === 0) return { processed: 0 };
+  let processed = 0;
+  for (const item of queue) {
+    try {
+      // Use githubService helper which calls preload -> main
+      const res = await pushFileToGithub({ owner: item.owner, repo: item.repo, path: item.path, branch: item.branch, message: item.message, content: item.content, token: item.token });
+      if (res && res.success) {
+        // remove from queue
+        await performTransaction(PUSH_QUEUE_STORE, 'readwrite', tx => { tx.objectStore(PUSH_QUEUE_STORE).delete(item.id); });
+        processed++;
+      } else {
+        console.warn('processGithubPushQueueOnce: push failed for', item.path, res);
+      }
+    } catch (e) {
+      console.warn('processGithubPushQueueOnce error for', item.path, e);
+    }
+  }
+  return { processed };
+};
+
+export const startGithubPushProcessor = (ms = 30_000) => {
+  try {
+    if (_githubPushProcessorId) clearInterval(_githubPushProcessorId);
+    _githubPushProcessorId = setInterval(() => {
+      processGithubPushQueueOnce().catch(e => console.warn('Github push processor failed:', e));
+    }, ms);
+    // trigger an immediate run
+    processGithubPushQueueOnce().catch(e => console.warn('Github push processor initial run failed:', e));
+    return _githubPushProcessorId;
+  } catch (e) {
+    console.warn('startGithubPushProcessor error:', e);
+    return null;
+  }
+};
+
+export const stopGithubPushProcessor = () => {
+  if (_githubPushProcessorId) {
+    clearInterval(_githubPushProcessorId);
+    _githubPushProcessorId = null;
+  }
+};
+
+export const isGithubPushProcessorRunning = () => {
+  return !!_githubPushProcessorId;
+};
+
+export const removeGithubQueueItem = async (id: string) => {
+  await performTransaction(PUSH_QUEUE_STORE, 'readwrite', tx => { tx.objectStore(PUSH_QUEUE_STORE).delete(id); });
+  return true;
+};
+
+// --- Settings helpers (persisted) ---
+export const setSetting = async (key: string, value: any) => {
+  try {
+    await performTransaction(SETTINGS_STORE, 'readwrite', tx => { tx.objectStore(SETTINGS_STORE).put({ key, value }); });
+    return true;
+  } catch (e) {
+    console.warn('setSetting failed', e);
+    return false;
+  }
+};
+
+export const getSetting = async (key: string) => {
+  try {
+    const entry = await performTransaction<any>(SETTINGS_STORE, 'readonly', tx => tx.objectStore(SETTINGS_STORE).get(key));
+    return entry ? entry.value : null;
+  } catch (e) {
+    console.warn('getSetting failed', e);
+    return null;
+  }
+};
+
+export const setGithubProcessorEnabled = async (enabled: boolean) => {
+  await setSetting('github_processor_enabled', enabled ? '1' : '0');
+  try {
+    if (enabled) startGithubPushProcessor(); else stopGithubPushProcessor();
+  } catch (_) {}
+  return true;
+};
+
+export const isGithubProcessorEnabled = async () => {
+  const v = await getSetting('github_processor_enabled');
+  if (v === null) {
+    // fallback to localStorage
+    try { return localStorage.getItem('github_auto_push') === '1'; } catch(_) { return false; }
+  }
+  return v === '1' || v === 1 || v === true;
 };
 
 export const getBooklets = async () => {
@@ -338,6 +515,17 @@ export const getBooklets = async () => {
 export const getBookletById = (id: string) => performTransaction<Booklet>(STORE_NAME, 'readonly', tx => tx.objectStore(STORE_NAME).get(id));
 
 export const createBooklet = async (dto: CreateBookletDTO, compiler: string) => {
+  // Prevent duplicate booklet creation by grade/subject/topic triple
+  const existing = await getBooklets();
+  const normalizedKey = (grade?: string, subject?: string, topic?: string) =>
+    `${(grade||'').toString().trim().toLowerCase()}|${(subject||'').toString().trim().toLowerCase()}|${(topic||'').toString().trim().toLowerCase()}`;
+  const key = normalizedKey(dto.grade, dto.subject, dto.topic);
+  const dupe = existing.find(b => normalizedKey(b.grade, b.subject, b.topic) === key);
+  if (dupe) {
+    console.warn('createBooklet: duplicate detected, returning existing booklet', dupe.id);
+    return dupe;
+  }
+
   const now = Date.now();
   const main: Booklet = {
     id: crypto.randomUUID(),
@@ -355,6 +543,25 @@ export const createBooklet = async (dto: CreateBookletDTO, compiler: string) => 
   await performTransaction(STORE_NAME, 'readwrite', tx => { tx.objectStore(STORE_NAME).put(main); });
   // Auto-sync to Supabase
   syncBookletToRemote(main).catch(e => console.warn('Sync failed:', e));
+  // Optionally enqueue GitHub push if auto-push is enabled
+  try {
+    const owner = localStorage.getItem('github_owner');
+    const repo = localStorage.getItem('github_repo');
+    const auto = localStorage.getItem('github_auto_push');
+    if (auto === '1' && owner && repo) {
+      const payload = {
+        id: crypto.randomUUID(),
+        owner,
+        repo,
+        path: `public/data/booklets/${main.id}.json`,
+        branch: 'main',
+        message: `Add booklet ${main.id}`,
+        content: JSON.stringify(main, null, 2)
+      } as any;
+      await enqueueGithubPush(payload);
+      startGithubPushProcessor();
+    }
+  } catch (e) { console.warn('Auto-enqueue push failed', e); }
   return main;
 };
 
@@ -372,6 +579,25 @@ export const updateBooklet = async (booklet: Booklet) => {
   await performTransaction(STORE_NAME, 'readwrite', tx => { tx.objectStore(STORE_NAME).put(booklet); });
   // Auto-sync to Supabase
   syncBookletToRemote(booklet).catch(e => console.warn('Sync failed:', e));
+  // Optionally enqueue GitHub push if auto-push is enabled
+  try {
+    const owner = localStorage.getItem('github_owner');
+    const repo = localStorage.getItem('github_repo');
+    const auto = localStorage.getItem('github_auto_push');
+    if (auto === '1' && owner && repo) {
+      const payload = {
+        id: crypto.randomUUID(),
+        owner,
+        repo,
+        path: `public/data/booklets/${booklet.id}.json`,
+        branch: 'main',
+        message: `Update booklet ${booklet.id}`,
+        content: JSON.stringify(booklet, null, 2)
+      } as any;
+      await enqueueGithubPush(payload);
+      startGithubPushProcessor();
+    }
+  } catch (e) { console.warn('Auto-enqueue push failed', e); }
   return booklet;
 };
 
@@ -674,44 +900,78 @@ export const registerUser = async (name: string, email: string, password: string
   return newUser;
 };
 
-export const loginUser = async (email: string, password: string) => {
+export const loginUser = async (email: string, password: string): Promise<User> => {
+  if (!email || !password) {
+    throw new Error("Email and password are required");
+  }
+  
   const normalizedEmail = email.toLowerCase().trim();
   
-  // Try Supabase first
+  // Try local first (faster, no network round-trip)
   try {
+    const users = await performTransaction<User[]>(USER_STORE, 'readonly', tx => 
+      tx.objectStore(USER_STORE).getAll()
+    );
+    const localUser = (users || []).find(u => u.email === normalizedEmail);
+    
+    if (localUser && localUser.password === password) {
+      console.log('[Auth] Local login successful:', localUser.email);
+      return localUser;
+    }
+  } catch (localErr) {
+    console.warn('[Auth] Local storage access failed:', localErr);
+  }
+  
+  // Try Supabase if local fails or not found
+  try {
+    console.log('[Auth] Attempting Supabase login for:', normalizedEmail);
     const { data: supaUsers, error } = await supabase
       .from('users')
       .select('*')
       .eq('email', normalizedEmail)
       .single();
     
-    if (!error && supaUsers) {
-      if (supaUsers.password !== password) throw new Error("Invalid credentials.");
-      // Map Supabase row to User object
-      const user: User = {
-        id: supaUsers.id,
-        name: supaUsers.name,
-        email: supaUsers.email,
-        password: supaUsers.password,
-        role: supaUsers.role as UserRole,
-        status: supaUsers.status as UserStatus,
-        grade: supaUsers.grade,
-        createdAt: supaUsers.created_at
-      };
-      // Sync to local storage
-      await performTransaction(USER_STORE, 'readwrite', tx => { tx.objectStore(USER_STORE).put(user); });
-      return user;
+    if (error) {
+      console.warn('[Auth] Supabase query error:', error);
+      throw new Error("Invalid credentials");
     }
+    
+    if (!supaUsers) {
+      throw new Error("Invalid credentials");
+    }
+    
+    if (supaUsers.password !== password) {
+      throw new Error("Invalid credentials");
+    }
+    
+    // Map Supabase row to User object
+    const user: User = {
+      id: supaUsers.id,
+      name: supaUsers.name,
+      email: supaUsers.email,
+      password: supaUsers.password,
+      role: supaUsers.role as UserRole,
+      status: supaUsers.status as UserStatus,
+      grade: supaUsers.grade,
+      createdAt: supaUsers.created_at
+    };
+    
+    console.log('[Auth] Supabase login successful, syncing to local:', user.email);
+    
+    // Sync to local storage for future offline access
+    try {
+      await performTransaction(USER_STORE, 'readwrite', tx => { 
+        tx.objectStore(USER_STORE).put(user); 
+      });
+    } catch (syncErr) {
+      console.warn('[Auth] Failed to sync user to local storage:', syncErr);
+    }
+    
+    return user;
   } catch (e: any) {
-    if (e.message === "Invalid credentials.") throw e;
-    // Supabase unavailable, try local
+    console.error('[Auth] Supabase login failed:', e);
+    throw new Error("Invalid credentials");
   }
-  
-  // Fallback to local
-  const users = await performTransaction<User[]>(USER_STORE, 'readonly', tx => tx.objectStore(USER_STORE).getAll());
-  const user = (users || []).find(u => u.email === normalizedEmail);
-  if (!user || user.password !== password) throw new Error("Invalid credentials.");
-  return user;
 };
 
 export const resetPassword = async (email: string, newPassword: string) => {
@@ -859,78 +1119,201 @@ export const clearLibrary = async () => {
   return true;
 };
 
-// ---- Remote sync helpers (Supabase) ----
-export const pushBookletsToRemote = async () => {
-  const local = await performTransaction<Booklet[]>(STORE_NAME, 'readonly', tx => tx.objectStore(STORE_NAME).getAll()) || [];
-  if (!local || local.length === 0) return { pushed: 0 };
-  const payload = local.map(b => ({
-    id: b.id,
-    title: b.title,
-    grade: b.grade,
-    subject: b.subject,
-    topic: b.topic,
-    type: b.type,
-    compiler: b.compiler,
-    is_published: b.isPublished || false,
-    created_at: b.createdAt || Date.now(),
-    updated_at: b.updatedAt || Date.now(),
-    questions: b.questions || []
-  }));
-
-  const { data, error } = await supabase.from('booklets').upsert(payload, { onConflict: 'id' }).select('id');
-  if (error) {
-    console.error('Supabase push error:', error);
-    throw error;
+// Delete a single booklet from both local and Supabase
+export const deleteBooklet = async (id: string): Promise<boolean> => {
+  try {
+    console.log('[Delete] Removing booklet:', id);
+    
+    // Delete from IndexedDB
+    await performTransaction(STORE_NAME, 'readwrite', tx => {
+      tx.objectStore(STORE_NAME).delete(id);
+    });
+    
+    // Delete from Supabase
+    const { error } = await supabase.from('booklets').delete().eq('id', id);
+    if (error) {
+      console.error('[Delete] Supabase delete error:', error);
+      throw error;
+    }
+    
+    console.log('[Delete] Booklet deleted successfully:', id);
+    return true;
+  } catch (err: any) {
+    console.error('[Delete] Failed to delete booklet:', err);
+    throw err;
   }
-  return { pushed: data?.length || 0 };
 };
 
-export const pullBookletsFromRemote = async () => {
-  const { data, error } = await supabase.from('booklets').select('*');
-  if (error) {
-    console.error('Supabase pull error:', error);
-    throw error;
-  }
-  const remote = (data || []) as any[];
-  if (!remote.length) return { pulled: 0 };
-
-  const local = await performTransaction<Booklet[]>(STORE_NAME, 'readonly', tx => tx.objectStore(STORE_NAME).getAll()) || [];
-  const localMap = new Map(local.map(l => [l.id, l]));
-  const toPut: Booklet[] = [];
-
-  for (const r of remote) {
-    const remoteUpdated = Number(r.updated_at || 0);
-    const localItem = localMap.get(r.id as string) as Booklet | undefined;
-    if (!localItem || remoteUpdated > (localItem.updatedAt || 0)) {
-      const b: Booklet = {
-        id: r.id,
-        title: r.title,
-        subject: r.subject,
-        grade: r.grade,
-        topic: r.topic,
-        type: r.type as BookletType,
-        compiler: r.compiler,
-        isPublished: !!r.is_published,
-        createdAt: Number(r.created_at || Date.now()),
-        updatedAt: Number(r.updated_at || Date.now()),
-        questions: r.questions || []
-      };
-      toPut.push(b);
+// Clear all booklets from both local and Supabase
+export const clearAllBooklets = async (): Promise<{ local: boolean; remote: boolean }> => {
+  try {
+    console.log('[Delete] Clearing all booklets from local and Supabase...');
+    
+    // Clear IndexedDB
+    await clearLibrary();
+    
+    // Get all booklet IDs from Supabase and delete them
+    const { data, error: fetchError } = await supabase.from('booklets').select('id');
+    if (fetchError) {
+      console.error('[Delete] Failed to fetch booklets for deletion:', fetchError);
+      throw fetchError;
     }
+    
+    if (data && data.length > 0) {
+      const ids = data.map(b => b.id);
+      console.log(`[Delete] Deleting ${ids.length} booklets from Supabase...`);
+      
+      const { error: deleteError } = await supabase.from('booklets').delete().in('id', ids);
+      if (deleteError) {
+        console.error('[Delete] Supabase batch delete error:', deleteError);
+        throw deleteError;
+      }
+    }
+    
+    console.log('[Delete] All booklets cleared successfully');
+    return { local: true, remote: true };
+  } catch (err: any) {
+    console.error('[Delete] Failed to clear all booklets:', err);
+    return { local: true, remote: false };
   }
+};
 
-  if (toPut.length > 0) {
-    await performTransaction(STORE_NAME, 'readwrite', tx => {
-      const s = tx.objectStore(STORE_NAME);
-      toPut.forEach(b => s.put(b));
-    });
+// ---- Remote sync helpers (Supabase) ----
+export const pushBookletsToRemote = async (): Promise<{ pushed: number }> => {
+  try {
+    console.log('[Sync] Pushing booklets to Supabase...');
+    const local = await performTransaction<Booklet[]>(STORE_NAME, 'readonly', tx => 
+      tx.objectStore(STORE_NAME).getAll()
+    ) || [];
+    
+    if (!local || local.length === 0) {
+      console.log('[Sync] No local booklets to push');
+      return { pushed: 0 };
+    }
+
+    const payload = local.map(b => ({
+      id: b.id,
+      title: b.title || 'Untitled',
+      grade: b.grade || '',
+      subject: b.subject || '',
+      topic: b.topic || '',
+      type: b.type || BookletType.WITH_SOLUTIONS,
+      compiler: b.compiler || 'Unknown',
+      is_published: !!b.isPublished,
+      created_at: b.createdAt || Date.now(),
+      updated_at: b.updatedAt || Date.now(),
+      questions: Array.isArray(b.questions) ? b.questions : []
+    }));
+
+    console.log(`[Sync] Pushing ${payload.length} booklets to Supabase`);
+    const { data, error } = await supabase
+      .from('booklets')
+      .upsert(payload, { onConflict: 'id' })
+      .select('id');
+      
+    if (error) {
+      console.error('[Sync] Supabase push error:', error);
+      throw new Error(`Failed to push to Supabase: ${error.message}`);
+    }
+    
+    const pushed = data?.length || 0;
+    console.log(`[Sync] Push complete: ${pushed} booklets synced`);
+    return { pushed };
+  } catch (err: any) {
+    console.error('[Sync] pushBookletsToRemote failed:', err);
+    throw err;
   }
-  return { pulled: toPut.length };
+};
+
+export const pullBookletsFromRemote = async (): Promise<{ pulled: number }> => {
+  try {
+    console.log('[Sync] Pulling booklets from Supabase...');
+    
+    // Fetch in chunks of 2 booklets at a time to avoid timeout
+    const PAGE_SIZE = 2;
+    const remote: any[] = [];
+    let page = 0;
+    let hasMore = true;
+    
+    while (hasMore) {
+      const start = page * PAGE_SIZE;
+      const end = start + PAGE_SIZE - 1;
+      
+      console.log(`[Sync] Fetching booklets ${start}-${end}...`);
+      const { data, error } = await supabase
+        .from('booklets')
+        .select('*')
+        .range(start, end);
+      
+      if (error) {
+        console.error('[Sync] Supabase pull error:', error);
+        throw new Error(`Failed to pull from Supabase: ${error.message}`);
+      }
+      
+      if (!data || data.length === 0) {
+        hasMore = false;
+      } else {
+        remote.push(...data);
+        hasMore = data.length === PAGE_SIZE;
+        page++;
+      }
+    }
+    
+    console.log(`[Sync] Received ${remote.length} booklets from Supabase`);
+    
+    if (!remote.length) return { pulled: 0 };
+
+    const local = await performTransaction<Booklet[]>(STORE_NAME, 'readonly', tx => 
+      tx.objectStore(STORE_NAME).getAll()
+    ) || [];
+    
+    const localMap = new Map(local.map(l => [l.id, l]));
+    const toPut: Booklet[] = [];
+
+    for (const r of remote) {
+      const remoteUpdated = Number(r.updated_at || 0);
+      const localItem = localMap.get(r.id as string) as Booklet | undefined;
+      
+      // Pull if not in local OR remote is newer
+      if (!localItem || remoteUpdated > (localItem.updatedAt || 0)) {
+        const b: Booklet = {
+          id: r.id,
+          title: r.title || 'Untitled',
+          subject: r.subject || '',
+          grade: r.grade || '',
+          topic: r.topic || '',
+          type: (r.type as BookletType) || BookletType.WITH_SOLUTIONS,
+          compiler: r.compiler || 'Unknown',
+          isPublished: !!r.is_published,
+          createdAt: Number(r.created_at || Date.now()),
+          updatedAt: Number(r.updated_at || Date.now()),
+          questions: Array.isArray(r.questions) ? r.questions : []
+        };
+        toPut.push(b);
+      }
+    }
+
+    if (toPut.length > 0) {
+      console.log(`[Sync] Updating ${toPut.length} booklets in local storage`);
+      await performTransaction(STORE_NAME, 'readwrite', tx => {
+        const s = tx.objectStore(STORE_NAME);
+        toPut.forEach(b => s.put(b));
+      });
+    }
+    
+    console.log(`[Sync] Pull complete: ${toPut.length} booklets updated`);
+    return { pulled: toPut.length };
+  } catch (err: any) {
+    console.error('[Sync] pullBookletsFromRemote failed:', err);
+    throw err;
+  }
 };
 
 export const syncBooklets = async () => {
   // Pull remote changes first, then push local changes (simple conflict resolution by updatedAt)
   await pullBookletsFromRemote().catch(e => console.warn('pullBookletsFromRemote failed', e));
+  // Deduplicate by grade/subject/topic to avoid duplicate entries before pushing back up
+  await dedupeLibrary().catch(e => console.warn('dedupeLibrary failed', e));
   const res = await pushBookletsToRemote().catch(e => { console.warn('pushBookletsToRemote failed', e); return { pushed: 0 }; });
   return res;
 };
@@ -993,6 +1376,8 @@ export const pullAssignmentsFromRemote = async () => {
   const { data, error } = await supabase.from('assignments').select('*');
   if (error) {
     console.error('pullAssignmentsFromRemote error:', error);
+    // If table missing in Supabase schema, return gracefully so UI doesn't break
+    if (error.code === 'PGRST205') return { pulled: 0, missingTable: true } as any;
     throw error;
   }
   const remote = (data || []) as any[];
@@ -1206,6 +1591,21 @@ export const createAssignment = async (data: any) => {
   await performTransaction(ASSIGNMENT_STORE, 'readwrite', tx => { tx.objectStore(ASSIGNMENT_STORE).put(assignment); });
   // Auto-sync to Supabase
   syncAssignmentToRemote(assignment).catch(e => console.warn('Sync failed:', e));
+  // Create in-system notifications for students in the assignment grade
+  try {
+    const users = await getUsers();
+    const recipients = (users || []).filter(u => u.role === UserRole.STUDENT && u.grade === assignment.grade);
+    for (const r of recipients) {
+      try {
+        await createNotificationForUser(r.id, `New assessment: ${assignment.bookletTitle || assignment.topic || 'Assignment'}`, `Open to start the assessment. Due: ${assignment.dueDate || 'N/A'}`, { assignmentId: assignment.id, bookletId: assignment.bookletId }, 'ASSIGNMENT');
+      } catch (e) {
+        console.warn('Failed to create notification for', r.id, e);
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to create assignment notifications:', e);
+  }
+
   return assignment;
 };
 
