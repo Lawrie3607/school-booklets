@@ -78,8 +78,13 @@ const proxyFetch = async (url: string, options?: RequestInit): Promise<Response>
   }
 };
 
+// Main client: uses proxy on web (for mutations), direct on Electron
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   global: {
     fetch: proxyFetch as any
   }
 });
+
+// Direct client: bypasses proxy (use for large reads like booklets)
+// Uses anon key so it's safe for browser + RLS policies protect data
+export const supabaseDirect = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);

@@ -1,6 +1,6 @@
 
 import { Booklet, CreateBookletDTO, Question, BookletType, User, UserRole, UserStatus, Assignment, Submission, Notification } from "../types";
-import { supabase } from "./supabaseClient";
+import { supabase, supabaseDirect } from "./supabaseClient";
 import { pushFileToGithub } from './githubService';
 
 // Remote URLs for chunked library data (loaded at runtime to avoid deploy size limits)
@@ -1229,6 +1229,7 @@ export const pullBookletsFromRemote = async (): Promise<{ pulled: number }> => {
   try {
     console.log('[Sync] Pulling booklets from Supabase...');
     
+    // Use direct client to bypass proxy (large data, anon key is safe with RLS)
     // Fetch in chunks of 2 booklets at a time to avoid timeout
     const PAGE_SIZE = 2;
     const remote: any[] = [];
@@ -1240,7 +1241,7 @@ export const pullBookletsFromRemote = async (): Promise<{ pulled: number }> => {
       const end = start + PAGE_SIZE - 1;
       
       console.log(`[Sync] Fetching booklets ${start}-${end}...`);
-      const { data, error } = await supabase
+      const { data, error } = await supabaseDirect
         .from('booklets')
         .select('*')
         .range(start, end);
