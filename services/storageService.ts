@@ -1191,7 +1191,8 @@ export const pushBookletsToRemote = async (): Promise<{ pushed: number }> => {
       return { pushed: 0 };
     }
 
-    const payload = local.map(b => ({
+    // Prepare payload metadata and detect large items
+    const payloadMeta = local.map(b => ({
       id: b.id,
       title: b.title || 'Untitled',
       grade: b.grade || '',
@@ -1201,24 +1202,54 @@ export const pushBookletsToRemote = async (): Promise<{ pushed: number }> => {
       compiler: b.compiler || 'Unknown',
       is_published: !!b.isPublished,
       created_at: b.createdAt || Date.now(),
-      updated_at: b.updatedAt || Date.now(),
-      questions: Array.isArray(b.questions) ? b.questions : []
+      updated_at: b.updatedAt || Date.now()
     }));
 
-    console.log(`[Sync] Pushing ${payload.length} booklets to Supabase`);
-    const { data, error } = await supabase
+    console.log(`[Sync] Pushing ${payloadMeta.length} booklet metadata records to Supabase`);
+
+    // Upsert metadata via proxy (small payload)
+    const { data: metaData, error: metaError } = await supabase
       .from('booklets')
-      .upsert(payload, { onConflict: 'id' })
+      .upsert(payloadMeta, { onConflict: 'id' })
       .select('id');
-      
-    if (error) {
-      console.error('[Sync] Supabase push error:', error);
-      throw new Error(`Failed to push to Supabase: ${error.message}`);
+
+    if (metaError) {
+      console.error('[Sync] Supabase metadata push error:', metaError);
+      throw new Error(`Failed to push booklet metadata: ${metaError.message}`);
     }
-    
-    const pushed = data?.length || 0;
-    console.log(`[Sync] Push complete: ${pushed} booklets synced`);
-    return { pushed };
+
+    // For full content (questions), push per-booklet and bypass proxy for large payloads
+    let pushedContent = 0;
+    for (const b of local) {
+      const questions = Array.isArray(b.questions) ? b.questions : [];
+      const sizeBytes = Buffer.byteLength(JSON.stringify(questions), 'utf8');
+
+      try {
+        if (sizeBytes > 1024 * 1024) { // >1MB: use direct client to avoid proxy limits
+          console.log(`[Sync] Uploading full content for ${b.id} via direct client (${(sizeBytes/1024/1024).toFixed(2)} MB)`);
+          const { error: directErr } = await supabaseDirect.from('booklets').upsert([{
+            id: b.id,
+            questions,
+            updated_at: b.updatedAt || Date.now()
+          }], { onConflict: 'id' });
+          if (directErr) throw directErr;
+        } else {
+          // small enough to send through proxy using main client
+          const { error: smallErr } = await supabase.from('booklets').upsert([{
+            id: b.id,
+            questions,
+            updated_at: b.updatedAt || Date.now()
+          }], { onConflict: 'id' });
+          if (smallErr) throw smallErr;
+        }
+        pushedContent++;
+      } catch (err: any) {
+        console.error(`[Sync] Failed to upload content for booklet ${b.id}:`, err?.message || err);
+      }
+    }
+
+    console.log(`[Sync] Push complete: ${payloadMeta.length} metadata records, ${pushedContent} contents uploaded`);
+    return { pushed: payloadMeta.length };
   } catch (err: any) {
     console.error('[Sync] pushBookletsToRemote failed:', err);
     throw err;
