@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && electron-builder",
-    "build:web": "cross-env BUILD_TARGET=web vite build",
+    "build:web": "cross-env BUILD_TARGET=web vite build && node scripts/copy-public.js",
     "preview": "vite preview",
     "electron:dev": "vite",
     "electron:build": "vite build && electron-builder",
