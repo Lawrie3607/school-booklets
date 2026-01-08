@@ -84,10 +84,11 @@ export let supabase: any;
 export let supabaseDirect: any;
 
 if (HAS_ANON_KEY) {
-  // Normal case: create real Supabase clients
-  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: { fetch: proxyFetch as any }
-  });
+  // Normal case: create Supabase clients that use the ANON key directly in the browser.
+  // This avoids routing every request through the Vercel proxy which can trigger
+  // platform bot/WAF pages. The `proxyFetch` remains available for environments
+  // that explicitly need it.
+  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   supabaseDirect = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 } else {
   // No anon key available in this environment (preview). Provide a minimal

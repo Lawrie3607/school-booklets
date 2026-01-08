@@ -424,21 +424,46 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
                   <button onClick={() => { setShowCreateAssignment(true); if (booklets.length>0) setAssignmentForm(f=>({...f, bookletId: booklets[0].id, grade: currentUser.grade || f.grade})); }} className="bg-indigo-600 text-white px-8 py-4 rounded-[2rem] shadow-2xl font-black text-[11px] uppercase tracking-widest hover:bg-black transition-all">Create Assignment</button>
                   <button onClick={async () => { try { await storageService.createDemoData(); setToast({message: 'Demo data created.', type: 'success'}); setTimeout(()=>setToast(null),3000); refreshData(); } catch(e:any) { setToast({message: e.message||'Seed failed', type:'error'}); } }} className="bg-yellow-500 text-black px-6 py-4 rounded-[2rem] shadow-2xl font-black text-[11px] uppercase tracking-widest hover:bg-yellow-400 transition-all">Seed Demo Data</button>
                   <button onClick={async () => {
-                    const grade = prompt('Enter grade to publish for (e.g. Grade 10):', currentUser.grade || 'Grade 10');
-                    if (!grade) return;
+                    // Use prompt when available; fallback to current user's grade if prompt is blocked (Electron environments sometimes disable prompt)
+                    let grade: string | null = null;
                     try {
-                      const all = await storageService.getBooklets();
-                      const targets = all.filter(b => normalize(b.grade) === normalize(grade));
-                      if (targets.length === 0) { setToast({message: `No booklets found for ${grade}`, type: 'error'}); setTimeout(()=>setToast(null),3000); return; }
-                      for (const b of targets) {
-                        b.isPublished = true;
-                        b.type = BookletType.READING_ONLY;
-                        await storageService.updateBooklet(b);
-                      }
-                      setToast({message: `Published ${targets.length} booklets for ${grade}.`, type: 'success'});
-                      setTimeout(()=>setToast(null),3000);
-                      refreshData();
-                    } catch(err:any) { setToast({message: err.message||'Failed', type:'error'}); }
+                      grade = (typeof window !== 'undefined' && typeof window.prompt === 'function')
+                        ? window.prompt('Enter grade to publish for (e.g. Grade 10):', currentUser.grade || 'Grade 10')
+                        : null;
+                    } catch (e) {
+                      grade = null;
+                    }
+                    // Fallback to currentUser.grade when prompt is not available or was cancelled
+                    if (!grade) grade = currentUser.grade || 'Grade 10';
+                    if (!grade) return;
+                      try {
+                        const all = await storageService.getBooklets();
+                        const targets = all.filter(b => normalize(b.grade) === normalize(grade!));
+                        if (targets.length === 0) { setToast({message: `No booklets found for ${grade}`, type: 'error'}); setTimeout(()=>setToast(null),3000); return; }
+                        // Instead of converting teacher copies to reading-only (which removes them from teacher view),
+                        // create published reading-only duplicates so teachers retain their original WITH_SOLUTIONS assets.
+                        let created = 0;
+                        for (const b of targets) {
+                          try {
+                            const dto = { subject: b.subject, grade: b.grade, topic: (b.topic || '') + ' (Published)', type: BookletType.READING_ONLY };
+                            const newB = await storageService.createBooklet(dto as any, currentUser.name);
+                            // copy questions if present
+                            if (b.questions && b.questions.length > 0) {
+                              const cloned = b.questions.map(q => ({ ...q, id: crypto.randomUUID(), createdAt: Date.now(), updatedAt: Date.now() }));
+                              await storageService.addQuestionsToBooklet(newB.id, cloned as any);
+                            }
+                            // mark published
+                            newB.isPublished = true;
+                            await storageService.updateBooklet(newB);
+                            created++;
+                          } catch (innerErr) {
+                            console.warn('Publish: failed for booklet', b.id, innerErr);
+                          }
+                        }
+                        setToast({message: `Published ${created} booklets for ${grade}.`, type: 'success'});
+                        setTimeout(()=>setToast(null),3000);
+                        refreshData();
+                      } catch(err:any) { setToast({message: err.message||'Failed', type:'error'}); }
                   }} className="bg-green-600 text-white px-6 py-4 rounded-[2rem] shadow-2xl font-black text-[11px] uppercase tracking-widest hover:bg-black transition-all">Publish For Grade</button>
                 </div>
               )}

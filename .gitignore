@@ -38,3 +38,4 @@ booklet_library_backup_2025-12-31.json
 !public/
 !public/data/
 !public/data/*.json
+.env*.local

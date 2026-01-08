@@ -720,6 +720,35 @@ export const removeQuestionFromBooklet = async (bookletId: string, qId: string) 
   return booklet;
 };
 
+// Recover teacher copies: create WITH_SOLUTIONS duplicates for any published READING_ONLY booklets
+export const recoverTeacherCopies = async () => {
+  try {
+    const all = await getBooklets();
+    const targets = (all || []).filter(b => !!b.isPublished && b.type === BookletType.READING_ONLY);
+    let created = 0;
+    for (const b of targets) {
+      const baseTopic = (b.topic || '').toString().replace(/\s*\(Published\)\s*$/i, '').trim() || b.topic || '';
+      const exists = all.find(x => x.type === BookletType.WITH_SOLUTIONS && ((x.grade||'') === (b.grade||'') && (x.subject||'') === (b.subject||'') && ((x.topic||'') === baseTopic)));
+      if (exists) continue;
+      try {
+        const dto = { subject: b.subject, grade: b.grade, topic: baseTopic || (b.topic || ''), type: BookletType.WITH_SOLUTIONS };
+        const newB = await createBooklet(dto as any, 'AUTO-RECOVER');
+        if (b.questions && b.questions.length > 0) {
+          const cloned = b.questions.map(q => ({ ...q, id: crypto.randomUUID(), createdAt: Date.now(), updatedAt: Date.now() }));
+          await addQuestionsToBooklet(newB.id, cloned as any);
+        }
+        created++;
+      } catch (inner) {
+        console.warn('recoverTeacherCopies: failed for', b.id, inner);
+      }
+    }
+    return { success: true, created, checked: targets.length };
+  } catch (e) {
+    console.error('recoverTeacherCopies failed', e);
+    return { success: false, error: (e as any).message || String(e) };
+  }
+};
+
 /**
  * ULTRA-RESILIENT DATA IMPORT ENGINE
  * Fixes "Expected ',' or '}'" errors by deep-cleaning the string 
@@ -1386,7 +1415,8 @@ export const syncBookletToRemote = async (booklet: Booklet) => {
     updated_at: booklet.updatedAt || Date.now(),
     questions: booklet.questions || []
   };
-  const { error } = await supabase.from('booklets').upsert(payload, { onConflict: 'id' });
+  // Use direct client to avoid routing large payloads through the local proxy
+  const { error } = await (supabaseDirect && supabaseDirect.from ? supabaseDirect.from('booklets') : supabase.from('booklets')).upsert(payload, { onConflict: 'id' });
   if (error) {
     console.error('syncBookletToRemote error:', error);
     throw error;
