@@ -1222,7 +1222,8 @@ export const pushBookletsToRemote = async (): Promise<{ pushed: number }> => {
     let pushedContent = 0;
     for (const b of local) {
       const questions = Array.isArray(b.questions) ? b.questions : [];
-      const sizeBytes = Buffer.byteLength(JSON.stringify(questions), 'utf8');
+      const jsonStr = JSON.stringify(questions);
+      const sizeBytes = new TextEncoder().encode(jsonStr).length;
 
       try {
         if (sizeBytes > 1024 * 1024) { // >1MB: use direct client to avoid proxy limits
