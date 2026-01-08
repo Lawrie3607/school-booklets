@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = 'https://zqpdbmqneebjsytgkodl.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpxcGRibXFuZWVianN5dGdrb2RsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc0OTI4NjgsImV4cCI6MjA4MzA2ODg2OH0.zS7yZxjCLhxj66cR7M0y0JYEEHhhmLnMRbUvRfcSifc';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://zqpdbmqneebjsytgkodl.supabase.co';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpxcGRibXFuZWVianN5dGdrb2RsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc0OTI4NjgsImV4cCI6MjA4MzA2ODg2OH0.zS7yZxjCLhxj66cR7M0y0JYEEHhhmLnMRbUvRfcSifc';
 
 // Detect if running in Electron (desktop) vs web browser
 const isElectron = (): boolean => {

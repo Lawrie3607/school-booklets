@@ -1,7 +1,13 @@
-# Ignore large data file (loaded at runtime instead)
-data/
+# Ignore large data files (loaded at runtime instead)
 booklet_library_backup_2025-12-31.json
 services/defaultLibrary.ts
+pcl_library_backup_2026-01-07.json
+*.json.bak
+upload_booklets.sql
+dist/data/chem_12.json
+
+# Allow empty JSON files to prevent 404 errors
+!data/librarybooks.json
 
 # Ignore Electron-specific
 electron/

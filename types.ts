@@ -130,3 +130,15 @@ export interface AIQuestionResponse {
   requiresImage: boolean; 
   error?: string;
 }
+
+export interface Notification {
+  id: string;
+  userId: string;
+  type: string;
+  title: string;
+  body?: string;
+  data?: any;
+  isRead: boolean;
+  createdAt: number;
+  archivedAt: number | null;
+}
