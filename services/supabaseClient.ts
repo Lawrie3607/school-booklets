@@ -106,30 +106,54 @@ if (HAS_ANON_KEY) {
     }
   };
 
-  const makeFrom = (table: string) => ({
-    async select(sel: string = '*') {
-      const path = `/${table}?select=${encodeURIComponent(sel)}`;
-      const r = await proxyRequest('GET', path);
-      return { data: Array.isArray((r as any).data) ? (r as any).data : [], error: (r as any).error };
-    },
-    async range(start: number, end: number) {
-      const path = `/${table}?select=*&offset=${start}&limit=${end - start + 1}`;
-      const r = await proxyRequest('GET', path);
-      return { data: (r as any).data || [], error: (r as any).error };
-    },
-    async upsert(payload: any, opts?: any) {
-      const onConflict = opts?.onConflict || 'id';
-      const path = `/${table}?on_conflict=${encodeURIComponent(onConflict)}`;
-      const r = await proxyRequest('POST', path, payload, { Prefer: 'return=representation' });
-      return { data: (r as any).data || null, error: (r as any).error };
-    },
-    async insert(payload: any, opts?: any) {
-      const path = `/${table}`;
-      const r = await proxyRequest('POST', path, payload, { Prefer: 'return=representation' });
-      return { data: (r as any).data || null, error: (r as any).error };
-    },
-    async delete() { return { data: null, error: null }; }
-  });
+  const makeFrom = (table: string) => {
+    return {
+      select(sel: string = '*') {
+        return {
+          async range(start: number, end: number) {
+            const path = `/${table}?select=${encodeURIComponent(sel)}&offset=${start}&limit=${end - start + 1}`;
+            const r = await proxyRequest('GET', path);
+            return { data: (r as any).data || [], error: (r as any).error };
+          },
+          // also support calling without range: await .select().then? Provide a `then` to make it awaitable
+          then: async (onfulfilled: any, onrejected?: any) => {
+            const r = await proxyRequest('GET', `/${table}?select=${encodeURIComponent(sel)}`);
+            const result = { data: (r as any).data || [], error: (r as any).error };
+            return onfulfilled ? onfulfilled(result) : result;
+          }
+        };
+      },
+      range(start: number, end: number) {
+        // allow direct .from(table).range(...) usage
+        return (async () => {
+          const path = `/${table}?select=*&offset=${start}&limit=${end - start + 1}`;
+          const r = await proxyRequest('GET', path);
+          return { data: (r as any).data || [], error: (r as any).error };
+        })();
+      },
+      upsert(payload: any, opts?: any) {
+        const onConflict = opts?.onConflict || 'id';
+        return {
+          async select(sel: string = '*') {
+            const path = `/${table}?on_conflict=${encodeURIComponent(onConflict)}`;
+            const r = await proxyRequest('POST', path, payload, { Prefer: 'return=representation' });
+            // mimic supabase-js response shape
+            return { data: (r as any).data || null, error: (r as any).error };
+          }
+        };
+      },
+      insert(payload: any, opts?: any) {
+        return {
+          async select(sel: string = '*') {
+            const path = `/${table}`;
+            const r = await proxyRequest('POST', path, payload, { Prefer: 'return=representation' });
+            return { data: (r as any).data || null, error: (r as any).error };
+          }
+        };
+      },
+      async delete() { return { data: null, error: null }; }
+    };
+  };
 
   supabase = { from: (table: string) => makeFrom(table) };
   supabaseDirect = supabase;
