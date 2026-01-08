@@ -159,60 +159,7 @@ if (HAS_ANON_KEY) {
   supabaseDirect = supabase;
 }
 
-// If anon key is missing in this environment, create a lightweight proxy wrapper
-// that forwards REST-style requests to our server-side `/api/supabase-proxy`.
-// This prevents `supabase-js` from throwing "supabaseKey is required" and
-// allows the app to operate using the server proxy.
-if (!HAS_ANON_KEY) {
-  const proxyRequest = async (method: string, path: string, body?: any, headers?: Record<string,string>) => {
-    try {
-      const res = await fetch('/api/supabase-proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ method, path, body, headers })
-      });
-      const text = await res.text();
-      try { return { data: JSON.parse(text), status: res.status }; } catch { return { data: text, status: res.status }; }
-    } catch (err: any) {
-      return { error: { message: err.message || String(err) } };
-    }
-  };
-
-  const makeFrom = (table: string) => {
-    return {
-      async select(sel: string = '*') {
-        const path = `/${table}?select=${encodeURIComponent(sel)}`;
-        const r = await proxyRequest('GET', path);
-        return { data: Array.isArray((r as any).data) ? (r as any).data : [], error: (r as any).error };
-      },
-      async range(start: number, end: number) {
-        // Not directly used; helpers will call select then range via supabaseDirect in normal flow.
-        const path = `/${table}?select=*&offset=${start}&limit=${end - start + 1}`;
-        const r = await proxyRequest('GET', path);
-        return { data: (r as any).data || [], error: (r as any).error };
-      },
-      async upsert(payload: any, opts?: any) {
-        const onConflict = opts?.onConflict || 'id';
-        const path = `/${table}?on_conflict=${encodeURIComponent(onConflict)}`;
-        const r = await proxyRequest('POST', path, payload, { Prefer: 'return=representation' });
-        return { data: (r as any).data || null, error: (r as any).error };
-      },
-      async insert(payload: any, opts?: any) {
-        const path = `/${table}`;
-        const r = await proxyRequest('POST', path, payload, { Prefer: 'return=representation' });
-        return { data: (r as any).data || null, error: (r as any).error };
-      },
-      async delete() {
-        // minimal stub - not currently used in codepaths that require this fallback
-        return { data: null, error: null };
-      }
-    };
-  };
-
-  // Replace exported `supabase` and `supabaseDirect` with wrapper objects that
-  // expose `from(table)` compatible API used by our codebase.
-  (supabase as any) = {
-    from: (table: string) => makeFrom(table)
-  };
-  (supabaseDirect as any) = (supabase as any);
-}
+// NOTE: The chainable proxy wrapper for no-anon-key environments is defined
+// earlier in the file (inside the `else` branch when `HAS_ANON_KEY` is false).
+// We intentionally avoid redefining it here to preserve the chainable API
+// shape (`.from(...).select(...).range()` and `.from(...).upsert(...).select()`).
