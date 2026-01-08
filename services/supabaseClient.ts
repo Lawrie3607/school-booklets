@@ -1,7 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://zqpdbmqneebjsytgkodl.supabase.co';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpxcGRibXFuZWVianN5dGdrb2RsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc0OTI4NjgsImV4cCI6MjA4MzA2ODg2OH0.zS7yZxjCLhxj66cR7M0y0JYEEHhhmLnMRbUvRfcSifc';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const HAS_ANON_KEY = !!SUPABASE_ANON_KEY && SUPABASE_ANON_KEY.trim().length > 0;
 
 // Detect if running in Electron (desktop) vs web browser
 const isElectron = (): boolean => {
@@ -79,12 +80,14 @@ const proxyFetch = async (url: string, options?: RequestInit): Promise<Response>
 };
 
 // Main client: uses proxy on web (for mutations), direct on Electron
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+export const supabase = createClient(SUPABASE_URL, HAS_ANON_KEY ? SUPABASE_ANON_KEY : undefined as any, {
   global: {
     fetch: proxyFetch as any
   }
 });
 
 // Direct client: bypasses proxy (use for large reads like booklets)
-// Uses anon key so it's safe for browser + RLS policies protect data
-export const supabaseDirect = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// If anon key missing (web), fall back to proxy-backed client to avoid 401s.
+export const supabaseDirect = HAS_ANON_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : supabase;

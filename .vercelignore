@@ -6,9 +6,6 @@ pcl_library_backup_2026-01-07.json
 upload_booklets.sql
 dist/data/chem_12.json
 
-# Allow empty JSON files to prevent 404 errors
-!data/librarybooks.json
-
 # Ignore Electron-specific
 electron/
 dist-electron/
