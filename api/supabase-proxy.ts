@@ -75,6 +75,12 @@ export default async function handler(req: any, res: any) {
     // Handle non-OK responses
     if (!upstream.ok) {
       console.error('[Supabase Proxy] Error:', upstream.status, data);
+      // Log request context for debugging (truncate body to avoid extreme logs)
+      const truncatedBody = body && JSON.stringify(body).length > 10000 ? JSON.stringify(body).slice(0,10000) + '... (truncated)' : JSON.stringify(body);
+      console.error('[Supabase Proxy] Request context:', { method, path: fullPath, headers, body: truncatedBody });
+      if (upstream.status === 409) {
+        console.error('[Supabase Proxy] Conflict (409) details:', data);
+      }
       return res.status(upstream.status).json({ 
         error: data?.message || data?.error || 'Supabase request failed', 
         details: data,
