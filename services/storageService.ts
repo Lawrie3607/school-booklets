@@ -1206,6 +1206,7 @@ export const pushBookletsToRemote = async (): Promise<{ pushed: number }> => {
     }));
 
     console.log(`[Sync] Pushing ${payloadMeta.length} booklet metadata records to Supabase`);
+    console.log('[Sync] Metadata payload sample:', JSON.stringify(payloadMeta.slice(0, 2), null, 2)); // Log first 2 for debugging
 
     // Upsert metadata via proxy (small payload)
     const metaRes: any = await supabase
