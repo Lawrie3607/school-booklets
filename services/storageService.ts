@@ -1208,14 +1208,18 @@ export const pushBookletsToRemote = async (): Promise<{ pushed: number }> => {
     console.log(`[Sync] Pushing ${payloadMeta.length} booklet metadata records to Supabase`);
 
     // Upsert metadata via proxy (small payload)
-    const { data: metaData, error: metaError } = await supabase
+    const metaRes: any = await supabase
       .from('booklets')
       .upsert(payloadMeta, { onConflict: 'id' })
       .select('id');
 
+    const metaData = metaRes?.data;
+    const metaError = metaRes?.error;
+
     if (metaError) {
-      console.error('[Sync] Supabase metadata push error:', metaError);
-      throw new Error(`Failed to push booklet metadata: ${metaError.message}`);
+      console.error('[Sync] Supabase metadata push error:', metaError, 'response:', metaRes);
+      // If the proxy returned a 409 conflict or other details, include them for debugging
+      throw new Error(`Failed to push booklet metadata: ${metaError.message || JSON.stringify(metaRes)}`);
     }
 
     // For full content (questions), push per-booklet and bypass proxy for large payloads
@@ -1273,17 +1277,32 @@ export const pullBookletsFromRemote = async (): Promise<{ pulled: number }> => {
       const end = start + PAGE_SIZE - 1;
       
       console.log(`[Sync] Fetching booklets ${start}-${end}...`);
-      const { data, error } = await supabaseDirect
+      const result = await supabaseDirect
         .from('booklets')
         .select('*')
         .range(start, end);
       
+      // Normalize result shape and handle unexpected responses
+      let data: any = (result as any).data;
+      const error = (result as any).error;
+
       if (error) {
-        console.error('[Sync] Supabase pull error:', error);
-        throw new Error(`Failed to pull from Supabase: ${error.message}`);
+        console.error('[Sync] Supabase pull error:', error, 'result:', result);
+        throw new Error(`Failed to pull from Supabase: ${error.message || JSON.stringify(error)}`);
       }
-      
-      if (!data || data.length === 0) {
+
+      // Some proxy/REST paths may return a wrapper object rather than a raw array.
+      if (!Array.isArray(data) && data && Array.isArray((data as any).data)) {
+        console.warn('[Sync] Normalizing nested data wrapper from Supabase response');
+        data = (data as any).data;
+      }
+
+      if (!Array.isArray(data)) {
+        console.error('[Sync] Unexpected data shape received from Supabase pull:', data, 'full result:', result);
+        throw new Error('Unexpected response shape from Supabase when pulling booklets');
+      }
+
+      if (data.length === 0) {
         hasMore = false;
       } else {
         remote.push(...data);
