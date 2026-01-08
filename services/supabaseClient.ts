@@ -80,17 +80,60 @@ const proxyFetch = async (url: string, options?: RequestInit): Promise<Response>
 };
 
 // Main client: uses proxy on web (for mutations), direct on Electron
-export let supabase = createClient(SUPABASE_URL, HAS_ANON_KEY ? SUPABASE_ANON_KEY : undefined as any, {
-  global: {
-    fetch: proxyFetch as any
-  }
-});
+export let supabase: any;
+export let supabaseDirect: any;
 
-// Direct client: bypasses proxy (use for large reads like booklets)
-// If anon key missing (web), fall back to proxy-backed client to avoid 401s.
-export let supabaseDirect = HAS_ANON_KEY
-  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-  : supabase;
+if (HAS_ANON_KEY) {
+  // Normal case: create real Supabase clients
+  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { fetch: proxyFetch as any }
+  });
+  supabaseDirect = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+} else {
+  // No anon key available in this environment (preview). Provide a minimal
+  // wrapper compatible with our usage: expose `.from(table)` with select/upsert/range
+  const proxyRequest = async (method: string, path: string, body?: any, headers?: Record<string,string>) => {
+    try {
+      const res = await fetch('/api/supabase-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method, path, body, headers })
+      });
+      const text = await res.text();
+      try { return { data: JSON.parse(text), status: res.status }; } catch { return { data: text, status: res.status }; }
+    } catch (err: any) {
+      return { error: { message: err.message || String(err) } };
+    }
+  };
+
+  const makeFrom = (table: string) => ({
+    async select(sel: string = '*') {
+      const path = `/${table}?select=${encodeURIComponent(sel)}`;
+      const r = await proxyRequest('GET', path);
+      return { data: Array.isArray((r as any).data) ? (r as any).data : [], error: (r as any).error };
+    },
+    async range(start: number, end: number) {
+      const path = `/${table}?select=*&offset=${start}&limit=${end - start + 1}`;
+      const r = await proxyRequest('GET', path);
+      return { data: (r as any).data || [], error: (r as any).error };
+    },
+    async upsert(payload: any, opts?: any) {
+      const onConflict = opts?.onConflict || 'id';
+      const path = `/${table}?on_conflict=${encodeURIComponent(onConflict)}`;
+      const r = await proxyRequest('POST', path, payload, { Prefer: 'return=representation' });
+      return { data: (r as any).data || null, error: (r as any).error };
+    },
+    async insert(payload: any, opts?: any) {
+      const path = `/${table}`;
+      const r = await proxyRequest('POST', path, payload, { Prefer: 'return=representation' });
+      return { data: (r as any).data || null, error: (r as any).error };
+    },
+    async delete() { return { data: null, error: null }; }
+  });
+
+  supabase = { from: (table: string) => makeFrom(table) };
+  supabaseDirect = supabase;
+}
 
 // If anon key is missing in this environment, create a lightweight proxy wrapper
 // that forwards REST-style requests to our server-side `/api/supabase-proxy`.
